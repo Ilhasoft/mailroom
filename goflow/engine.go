@@ -53,7 +53,6 @@ func Engine() flows.Engine {
 	engInit.Do(func() {
 		bodyBytes := os.Getenv("MAX_BODY_BYTES")
 		bodyBytesValue := 10000
-		err := nil
 		if bodyBytes != "" {
 			bodyBytesValue, _ = strconv.Atoi(bodyBytes)
 		}

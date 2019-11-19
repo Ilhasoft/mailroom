@@ -3,8 +3,6 @@ package goflow
 import (
 	"crypto/tls"
 	"net/http"
-	"os"
-	"strconv"
 	"sync"
 	"time"
 
@@ -51,14 +49,9 @@ func RegisterAirtimeServiceFactory(factory engine.AirtimeServiceFactory) {
 // Engine returns the global engine instance for use with real sessions
 func Engine() flows.Engine {
 	engInit.Do(func() {
-		bodyBytes := os.Getenv("MAX_BODY_BYTES")
-		bodyBytesValue := 10000
-		if bodyBytes != "" {
-			bodyBytesValue, _ = strconv.Atoi(bodyBytes)
-		}
 		eng = engine.NewBuilder().
 			WithHTTPClient(httpClient).
-			WithWebhookServiceFactory(webhooks.NewServiceFactory("RapidProMailroom/"+config.Mailroom.Version, bodyBytesValue)).
+			WithWebhookServiceFactory(webhooks.NewServiceFactory("RapidProMailroom/"+config.Mailroom.Version, config.Mailroom.MaxBodyBytes)).
 			WithClassificationServiceFactory(classificationFactory).
 			WithAirtimeServiceFactory(airtimeFactory).
 			WithMaxStepsPerSprint(config.Mailroom.MaxStepsPerSprint).

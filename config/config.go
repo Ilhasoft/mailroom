@@ -42,9 +42,10 @@ type Config struct {
 
 	FCMKey string `help:"the FCM API key used to notify Android relayers to sync"`
 
-	AuthToken string `help:"the token clients will need to authenticate web requests"`
-	Address   string `help:"the address to bind our web server to"`
-	Port      int    `help:"the port to bind our web server to"`
+	MaxBodyBytes int    `help:"the max body bytes a request can have"`
+	AuthToken    string `help:"the token clients will need to authenticate web requests"`
+	Address      string `help:"the address to bind our web server to"`
+	Port         int    `help:"the port to bind our web server to"`
 }
 
 // NewMailroomConfig returns a new default configuration object
@@ -61,6 +62,7 @@ func NewMailroomConfig() *Config {
 		SMTPServer:        "",
 		MaxValueLength:    640,
 		MaxStepsPerSprint: 100,
+		MaxBodyBytes:      10000,
 
 		S3Endpoint:         "https://s3.amazonaws.com",
 		S3Region:           "us-east-1",

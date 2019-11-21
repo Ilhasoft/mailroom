@@ -66,13 +66,13 @@ func Simulator() flows.Engine {
 	simulatorInit.Do(func() {
 		simulator = engine.NewBuilder().
 			WithHTTPClient(httpClient).
-			WithWebhookServiceFactory(webhooks.NewServiceFactory("RapidProMailroom/"+config.Mailroom.Version, 10000)).
+			WithWebhookServiceFactory(webhooks.NewServiceFactory("RapidProMailroom/"+config.Mailroom.Version, config.Mailroom.MaxBodyBytes)).
 			WithClassificationServiceFactory(classificationFactory).   // simulated sessions do real classification
 			WithAirtimeServiceFactory(simulatorAirtimeServiceFactory). // but faked airtime transfers
 			WithMaxStepsPerSprint(config.Mailroom.MaxStepsPerSprint).
 			Build()
 	})
-
+	
 	return simulator
 }
 

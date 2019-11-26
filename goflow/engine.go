@@ -72,7 +72,7 @@ func Simulator() flows.Engine {
 			WithMaxStepsPerSprint(config.Mailroom.MaxStepsPerSprint).
 			Build()
 	})
-	
+
 	return simulator
 }
 

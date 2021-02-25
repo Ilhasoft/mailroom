@@ -1,3 +1,62 @@
+v6.1.18
+----------
+ * Update to latest goflow
+ * Rename tickets/internal package
+
+v6.1.17
+----------
+ * Should match referral trigger with case insensitive
+
+v6.1.16
+----------
+ * Update to latest goflow
+ * Add link local ips to default disallowed networks config
+
+v6.1.15
+----------
+ * Update phonenumbers lib
+ * Decrease locations cache timeout to 1 minute
+
+v6.1.14
+----------
+ * Support ElasticSearch 7.2 (backwards incompatible to Elastic 6.*)
+
+v6.1.13
+----------
+ * Update to latest goflow
+
+v6.1.12
+----------
+ * Update to latest goflow v0.110.0
+
+v6.1.11
+----------
+ * Update to latest goflow v0.109.4
+
+v6.1.10
+----------
+ * Simplify FCM client code
+ * Fix updating message status when id column is bigint
+ * Ensure courier messages are always queued for a single contact
+ * Fix not triggering FCM syncs for broadcasts and ticket reply messages
+
+v6.1.9
+----------
+ * Update to goflow v0.109.0
+
+v6.1.8
+----------
+ * Update to latest goflow 0.108.0
+
+v6.1.7
+----------
+ * Use background instead of passive
+
+v6.1.6
+----------
+ * Update to latest goflow v0.107.2
+ * Add support for passive flows
+
 v6.1.5
 ----------
  * Update to goflow v0.107.1

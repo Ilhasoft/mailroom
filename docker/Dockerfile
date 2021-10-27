@@ -1,21 +1,22 @@
-FROM golang:1.16.6-alpine3.14
+FROM golang:1.16.8-bullseye AS builder
 
-WORKDIR /app
+WORKDIR /src
 
-RUN apk update \
-  && apk add --virtual build-deps gcc git curl tar \
-  && rm -rf /var/cache/apk/*
+COPY go.mod go.sum ./
+RUN go mod download -x
 
-RUN addgroup -S golang \
-  && adduser -S -G golang golang
-
-COPY . .
+COPY . ./
 
 RUN curl -L https://github.com/nyaruka/goflow/releases/download/v$(grep goflow go.mod | cut -d" " -f2 | cut -c2-)/docs.tar.gz --output docs.tar.gz && \
     tar -xf docs.tar.gz && rm docs.tar.gz
 
+RUN GOOS=linux GOARCH=amd64 go build -o /bin/mailroom ./cmd/mailroom/*.go
 
-RUN go install -v ./cmd/...
+FROM gcr.io/distroless/base-debian11
 
-EXPOSE 8000
-ENTRYPOINT ["mailroom"]
+WORKDIR /app
+
+COPY --from=builder bin/mailroom ./
+
+EXPOSE 8090
+ENTRYPOINT ["./mailroom"]

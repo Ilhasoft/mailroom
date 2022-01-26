@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/nyaruka/gocommon/dates"
+	"github.com/nyaruka/gocommon/dbutil"
 	"github.com/nyaruka/gocommon/httpx"
 	"github.com/nyaruka/goflow/assets"
 	"github.com/nyaruka/goflow/flows"
@@ -16,7 +16,6 @@ import (
 	"github.com/nyaruka/goflow/utils"
 	"github.com/nyaruka/mailroom/core/goflow"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/nyaruka/mailroom/utils/dbutil"
 	"github.com/nyaruka/null"
 
 	"github.com/jmoiron/sqlx"
@@ -153,8 +152,8 @@ func (t *Ticket) FlowTicket(oa *OrgAssets) (*flows.Ticket, error) {
 }
 
 // ForwardIncoming forwards an incoming message from a contact to this ticket
-func (t *Ticket) ForwardIncoming(ctx context.Context, rt *runtime.Runtime, org *OrgAssets, msgUUID flows.MsgUUID, text string, attachments []utils.Attachment) error {
-	ticketer := org.TicketerByID(t.t.TicketerID)
+func (t *Ticket) ForwardIncoming(ctx context.Context, rt *runtime.Runtime, oa *OrgAssets, msgUUID flows.MsgUUID, text string, attachments []utils.Attachment) error {
+	ticketer := oa.TicketerByID(t.t.TicketerID)
 	if ticketer == nil {
 		return errors.Errorf("can't find ticketer with id %d", t.t.TicketerID)
 	}
@@ -479,7 +478,6 @@ func TicketsChangeTopic(ctx context.Context, db Queryer, oa *OrgAssets, userID U
 	now := dates.Now()
 
 	for _, ticket := range tickets {
-		fmt.Printf("ticket #%d topic=%d\n", ticket.ID(), ticket.TopicID())
 		if ticket.TopicID() != topicID {
 			ids = append(ids, ticket.ID())
 			t := &ticket.t
@@ -788,7 +786,7 @@ func LookupTicketerByUUID(ctx context.Context, db Queryer, uuid assets.TicketerU
 	}
 
 	ticketer := &Ticketer{}
-	err = dbutil.ReadJSONRow(rows, &ticketer.t)
+	err = dbutil.ScanJSON(rows, &ticketer.t)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error unmarshalling ticketer")
 	}
@@ -827,7 +825,7 @@ func loadTicketers(ctx context.Context, db sqlx.Queryer, orgID OrgID) ([]assets.
 	ticketers := make([]assets.Ticketer, 0, 2)
 	for rows.Next() {
 		ticketer := &Ticketer{}
-		err := dbutil.ReadJSONRow(rows, &ticketer.t)
+		err := dbutil.ScanJSON(rows, &ticketer.t)
 		if err != nil {
 			return nil, errors.Wrapf(err, "error unmarshalling ticketer")
 		}

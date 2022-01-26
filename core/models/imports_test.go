@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nyaruka/gocommon/dbutil/assertdb"
 	"github.com/nyaruka/gocommon/jsonx"
 	"github.com/nyaruka/gocommon/urns"
 	"github.com/nyaruka/gocommon/uuids"
@@ -46,8 +47,7 @@ func TestContactImports(t *testing.T) {
 	// give our org a country by setting country on a channel
 	db.MustExec(`UPDATE channels_channel SET country = 'US' WHERE id = $1`, testdata.TwilioChannel.ID)
 
-	testJSON, err := os.ReadFile("testdata/imports.json")
-	require.NoError(t, err)
+	testJSON := testsuite.ReadFile("testdata/imports.json")
 
 	tcs := []struct {
 		Description string                `json:"description"`
@@ -58,8 +58,7 @@ func TestContactImports(t *testing.T) {
 		Errors      json.RawMessage       `json:"errors"`
 		Contacts    []*models.ContactSpec `json:"contacts"`
 	}{}
-	err = jsonx.Unmarshal(testJSON, &tcs)
-	require.NoError(t, err)
+	jsonx.MustUnmarshal(testJSON, &tcs)
 
 	oa, err := models.GetOrgAssets(ctx, rt, 1)
 	require.NoError(t, err)
@@ -188,8 +187,8 @@ func TestLoadContactImport(t *testing.T) {
 	sort.Strings(batchStatuses)
 	assert.Equal(t, []string{"C", "P"}, batchStatuses)
 
-	testsuite.AssertQuery(t, db, `SELECT count(*) FROM contacts_contactimportbatch WHERE status = 'C' AND finished_on IS NOT NULL`).Returns(1)
-	testsuite.AssertQuery(t, db, `SELECT count(*) FROM contacts_contactimportbatch WHERE status = 'P' AND finished_on IS NULL`).Returns(1)
+	assertdb.Query(t, db, `SELECT count(*) FROM contacts_contactimportbatch WHERE status = 'C' AND finished_on IS NOT NULL`).Returns(1)
+	assertdb.Query(t, db, `SELECT count(*) FROM contacts_contactimportbatch WHERE status = 'P' AND finished_on IS NULL`).Returns(1)
 }
 
 func TestContactSpecUnmarshal(t *testing.T) {

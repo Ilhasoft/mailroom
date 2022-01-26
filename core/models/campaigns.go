@@ -6,21 +6,20 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
+	"github.com/nyaruka/gocommon/dbutil"
 	"github.com/nyaruka/gocommon/uuids"
 	"github.com/nyaruka/goflow/assets"
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/nyaruka/mailroom/utils/dbutil"
 	"github.com/nyaruka/null"
-
-	"github.com/jmoiron/sqlx"
-	"github.com/lib/pq"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
 // FireID is our id for our event fires
-type FireID int
+type FireID int64
 
 // CampaignID is our type for campaign ids
 type CampaignID int
@@ -270,7 +269,7 @@ func loadCampaigns(ctx context.Context, db sqlx.Queryer, orgID OrgID) ([]*Campai
 	campaigns := make([]*Campaign, 0, 2)
 	for rows.Next() {
 		campaign := &Campaign{}
-		err := dbutil.ReadJSONRow(rows, &campaign.c)
+		err := dbutil.ScanJSON(rows, &campaign.c)
 		if err != nil {
 			return nil, errors.Wrapf(err, "error unmarshalling campaign")
 		}
@@ -404,7 +403,7 @@ type EventFire struct {
 }
 
 // LoadEventFires loads all the event fires with the passed in ids
-func LoadEventFires(ctx context.Context, db Queryer, ids []int64) ([]*EventFire, error) {
+func LoadEventFires(ctx context.Context, db Queryer, ids []FireID) ([]*EventFire, error) {
 	start := time.Now()
 
 	q, vs, err := sqlx.In(loadEventFireSQL, ids)
@@ -522,10 +521,10 @@ func AddEventFires(ctx context.Context, tx Queryer, adds []*FireAdd) error {
 
 // DeleteUnfiredEventsForGroupRemoval deletes any unfired events for all campaigns that are
 // based on the passed in group id for all the passed in contacts.
-func DeleteUnfiredEventsForGroupRemoval(ctx context.Context, tx Queryer, org *OrgAssets, contactIDs []ContactID, groupID GroupID) error {
+func DeleteUnfiredEventsForGroupRemoval(ctx context.Context, tx Queryer, oa *OrgAssets, contactIDs []ContactID, groupID GroupID) error {
 	fds := make([]*FireDelete, 0, 10)
 
-	for _, c := range org.CampaignByGroupID(groupID) {
+	for _, c := range oa.CampaignByGroupID(groupID) {
 		for _, e := range c.Events() {
 			for _, cid := range contactIDs {
 				fds = append(fds, &FireDelete{
@@ -542,14 +541,14 @@ func DeleteUnfiredEventsForGroupRemoval(ctx context.Context, tx Queryer, org *Or
 
 // AddCampaignEventsForGroupAddition first removes the passed in contacts from any events that group change may effect, then recreates
 // the campaign events they qualify for.
-func AddCampaignEventsForGroupAddition(ctx context.Context, tx Queryer, org *OrgAssets, contacts []*flows.Contact, groupID GroupID) error {
+func AddCampaignEventsForGroupAddition(ctx context.Context, tx Queryer, oa *OrgAssets, contacts []*flows.Contact, groupID GroupID) error {
 	cids := make([]ContactID, len(contacts))
 	for i, c := range contacts {
 		cids[i] = ContactID(c.ID())
 	}
 
 	// first remove all unfired events that may be affected by our group change
-	err := DeleteUnfiredEventsForGroupRemoval(ctx, tx, org, cids, groupID)
+	err := DeleteUnfiredEventsForGroupRemoval(ctx, tx, oa, cids, groupID)
 	if err != nil {
 		return errors.Wrapf(err, "error removing unfired campaign events for contacts")
 	}
@@ -557,12 +556,12 @@ func AddCampaignEventsForGroupAddition(ctx context.Context, tx Queryer, org *Org
 	// now calculate which event fires need to be added
 	fas := make([]*FireAdd, 0, 10)
 
-	tz := org.Env().Timezone()
+	tz := oa.Env().Timezone()
 
 	// for each of our contacts
 	for _, contact := range contacts {
 		// for each campaign that may have changed from this group change
-		for _, c := range org.CampaignByGroupID(groupID) {
+		for _, c := range oa.CampaignByGroupID(groupID) {
 			// check each event
 			for _, e := range c.Events() {
 				// and if we qualify by field

@@ -1,42 +1,15 @@
 package testdata
 
 import (
-	"github.com/nyaruka/gocommon/uuids"
 	"github.com/nyaruka/goflow/assets"
 	"github.com/nyaruka/mailroom/core/models"
 )
 
 // Constants used in tests, these are tied to the DB created by the RapidPro `mailroom_db` management command.
 
-type Org struct {
-	ID   models.OrgID
-	UUID uuids.UUID
-}
-
-type User struct {
-	ID    models.UserID
-	Email string
-}
-
-func (u *User) SafeID() models.UserID {
-	if u != nil {
-		return u.ID
-	}
-	return models.NilUserID
-}
-
 type Classifier struct {
 	ID   models.ClassifierID
 	UUID assets.ClassifierUUID
-}
-
-type Campaign struct {
-	ID   models.CampaignID
-	UUID models.CampaignUUID
-}
-
-type CampaignEvent struct {
-	ID models.CampaignEventID
 }
 
 var Org1 = &Org{1, "bf0514a5-9407-44c9-b0f9-3f36f9c18414"}

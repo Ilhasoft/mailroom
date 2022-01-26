@@ -7,10 +7,14 @@ import (
 	"os/exec"
 	"path"
 	"strings"
+	"testing"
 
+	"github.com/nyaruka/gocommon/jsonx"
 	"github.com/nyaruka/gocommon/storage"
 	"github.com/nyaruka/mailroom/core/models"
+	"github.com/nyaruka/mailroom/core/queue"
 	"github.com/nyaruka/mailroom/runtime"
+	"github.com/stretchr/testify/require"
 
 	"github.com/gomodule/redigo/redis"
 	"github.com/jmoiron/sqlx"
@@ -104,9 +108,9 @@ func getRP() *redis.Pool {
 // returns a redis connection, Close() should be called on it when done
 func getRC() redis.Conn {
 	conn, err := redis.Dial("tcp", "localhost:6379")
-	must(err)
+	noError(err)
 	_, err = conn.Do("SELECT", 0)
-	must(err)
+	noError(err)
 	return conn
 }
 
@@ -154,12 +158,26 @@ func resetStorage() {
 
 var resetDataSQL = `
 DELETE FROM notifications_notification;
+DELETE FROM notifications_incident;
 DELETE FROM request_logs_httplog;
 DELETE FROM tickets_ticketevent;
 DELETE FROM tickets_ticket;
+DELETE FROM triggers_trigger_contacts WHERE trigger_id >= 30000;
+DELETE FROM triggers_trigger_groups WHERE trigger_id >= 30000;
+DELETE FROM triggers_trigger WHERE id >= 30000;
 DELETE FROM channels_channelcount;
 DELETE FROM msgs_msg;
+DELETE FROM flows_flowrun;
+DELETE FROM flows_flowpathcount;
+DELETE FROM flows_flownodecount;
+DELETE FROM flows_flowruncount;
+DELETE FROM flows_flowcategorycount;
+DELETE FROM flows_flowsession;
+DELETE FROM flows_flowrevision WHERE flow_id >= 30000;
+DELETE FROM flows_flow WHERE id >= 30000;
 DELETE FROM campaigns_eventfire;
+DELETE FROM campaigns_campaignevent WHERE id >= 30000;
+DELETE FROM campaigns_campaign WHERE id >= 30000;
 DELETE FROM contacts_contactimportbatch;
 DELETE FROM contacts_contactimport;
 DELETE FROM contacts_contacturn WHERE id >= 30000;
@@ -168,11 +186,16 @@ DELETE FROM contacts_contact WHERE id >= 30000;
 DELETE FROM contacts_contactgroupcount WHERE group_id >= 30000;
 DELETE FROM contacts_contactgroup WHERE id >= 30000;
 
+ALTER SEQUENCE flows_flow_id_seq RESTART WITH 30000;
 ALTER SEQUENCE tickets_ticket_id_seq RESTART WITH 1;
 ALTER SEQUENCE msgs_msg_id_seq RESTART WITH 1;
+ALTER SEQUENCE flows_flowrun_id_seq RESTART WITH 1;
+ALTER SEQUENCE flows_flowsession_id_seq RESTART WITH 1;
 ALTER SEQUENCE contacts_contact_id_seq RESTART WITH 30000;
 ALTER SEQUENCE contacts_contacturn_id_seq RESTART WITH 30000;
-ALTER SEQUENCE contacts_contactgroup_id_seq RESTART WITH 30000;`
+ALTER SEQUENCE contacts_contactgroup_id_seq RESTART WITH 30000;
+ALTER SEQUENCE campaigns_campaign_id_seq RESTART WITH 30000;
+ALTER SEQUENCE campaigns_campaignevent_id_seq RESTART WITH 30000;`
 
 // removes contact data not in the test database dump. Note that this function can't
 // undo changes made to the contact data in the test database dump.
@@ -195,8 +218,45 @@ func mustExec(command string, args ...string) {
 	}
 }
 
+// convenience way to call a func and panic if it errors, e.g. must(foo())
 func must(err error) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+// if just checking an error is nil noError(err) reads better than must(err)
+var noError = must
+
+func ReadFile(path string) []byte {
+	d, err := os.ReadFile(path)
+	noError(err)
+	return d
+}
+
+func CurrentOrgTasks(t *testing.T, rp *redis.Pool) map[models.OrgID][]*queue.Task {
+	rc := rp.Get()
+	defer rc.Close()
+
+	// get all active org queues
+	active, err := redis.Ints(rc.Do("ZRANGE", "batch:active", 0, -1))
+	require.NoError(t, err)
+
+	tasks := make(map[models.OrgID][]*queue.Task)
+	for _, orgID := range active {
+		orgTasksEncoded, err := redis.Strings(rc.Do("ZRANGE", fmt.Sprintf("batch:%d", orgID), 0, -1))
+		require.NoError(t, err)
+
+		orgTasks := make([]*queue.Task, len(orgTasksEncoded))
+
+		for i := range orgTasksEncoded {
+			task := &queue.Task{}
+			jsonx.MustUnmarshal([]byte(orgTasksEncoded[i]), task)
+			orgTasks[i] = task
+		}
+
+		tasks[models.OrgID(orgID)] = orgTasks
+	}
+
+	return tasks
 }

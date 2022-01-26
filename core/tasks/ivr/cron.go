@@ -27,19 +27,19 @@ func init() {
 
 // StartIVRCron starts our cron job of retrying errored calls
 func StartIVRCron(rt *runtime.Runtime, wg *sync.WaitGroup, quit chan bool) error {
-	cron.StartCron(quit, rt.RP, retryIVRLock, time.Minute,
-		func(lockName string, lockValue string) error {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Minute*10)
+	cron.Start(quit, rt, retryIVRLock, time.Minute, false,
+		func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute*5)
 			defer cancel()
-			return retryCalls(ctx, rt, retryIVRLock, lockValue)
+			return retryCalls(ctx, rt)
 		},
 	)
 
-	cron.StartCron(quit, rt.RP, expireIVRLock, time.Minute,
-		func(lockName string, lockValue string) error {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Minute*10)
+	cron.Start(quit, rt, expireIVRLock, time.Minute, false,
+		func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute*5)
 			defer cancel()
-			return expireCalls(ctx, rt, expireIVRLock, lockValue)
+			return expireCalls(ctx, rt)
 		},
 	)
 
@@ -47,8 +47,8 @@ func StartIVRCron(rt *runtime.Runtime, wg *sync.WaitGroup, quit chan bool) error
 }
 
 // retryCalls looks for calls that need to be retried and retries them
-func retryCalls(ctx context.Context, rt *runtime.Runtime, lockName string, lockValue string) error {
-	log := logrus.WithField("comp", "ivr_cron_retryer").WithField("lock", lockValue)
+func retryCalls(ctx context.Context, rt *runtime.Runtime) error {
+	log := logrus.WithField("comp", "ivr_cron_retryer")
 	start := time.Now()
 
 	// find all calls that need restarting
@@ -114,8 +114,8 @@ func retryCalls(ctx context.Context, rt *runtime.Runtime, lockName string, lockV
 }
 
 // expireCalls looks for calls that should be expired and ends them
-func expireCalls(ctx context.Context, rt *runtime.Runtime, lockName string, lockValue string) error {
-	log := logrus.WithField("comp", "ivr_cron_expirer").WithField("lock", lockValue)
+func expireCalls(ctx context.Context, rt *runtime.Runtime) error {
+	log := logrus.WithField("comp", "ivr_cron_expirer")
 	start := time.Now()
 
 	ctx, cancel := context.WithTimeout(ctx, time.Minute*10)
@@ -128,7 +128,6 @@ func expireCalls(ctx context.Context, rt *runtime.Runtime, lockName string, lock
 	}
 	defer rows.Close()
 
-	expiredRuns := make([]models.FlowRunID, 0, 100)
 	expiredSessions := make([]models.SessionID, 0, 100)
 
 	for rows.Next() {
@@ -138,8 +137,7 @@ func expireCalls(ctx context.Context, rt *runtime.Runtime, lockName string, lock
 			return errors.Wrapf(err, "error scanning expired run")
 		}
 
-		// add the run and session to those we need to expire
-		expiredRuns = append(expiredRuns, exp.RunID)
+		// add the session to those we need to expire
 		expiredSessions = append(expiredSessions, exp.SessionID)
 
 		// load our connection
@@ -157,12 +155,12 @@ func expireCalls(ctx context.Context, rt *runtime.Runtime, lockName string, lock
 	}
 
 	// now expire our runs and sessions
-	if len(expiredRuns) > 0 {
-		err := models.ExpireRunsAndSessions(ctx, rt.DB, expiredRuns, expiredSessions)
+	if len(expiredSessions) > 0 {
+		err := models.ExitSessions(ctx, rt.DB, expiredSessions, models.SessionStatusExpired)
 		if err != nil {
-			log.WithError(err).Error("error expiring runs and sessions for expired calls")
+			log.WithError(err).Error("error expiring sessions for expired calls")
 		}
-		log.WithField("count", len(expiredRuns)).WithField("elapsed", time.Since(start)).Info("expired and hung up on channel connections")
+		log.WithField("count", len(expiredSessions)).WithField("elapsed", time.Since(start)).Info("expired and hung up on channel connections")
 	}
 
 	return nil

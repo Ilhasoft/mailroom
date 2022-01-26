@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/nyaruka/gocommon/dbutil/assertdb"
 	"github.com/nyaruka/mailroom/core/ivr"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/core/queue"
@@ -46,18 +47,18 @@ func TestRetries(t *testing.T) {
 	client.callID = ivr.CallID("call1")
 	err = HandleFlowStartBatch(ctx, rt, batch)
 	assert.NoError(t, err)
-	testsuite.AssertQuery(t, db, `SELECT COUNT(*) FROM channels_channelconnection WHERE contact_id = $1 AND status = $2 AND external_id = $3`,
+	assertdb.Query(t, db, `SELECT COUNT(*) FROM channels_channelconnection WHERE contact_id = $1 AND status = $2 AND external_id = $3`,
 		testdata.Cathy.ID, models.ConnectionStatusWired, "call1").Returns(1)
 
 	// change our call to be errored instead of wired
 	db.MustExec(`UPDATE channels_channelconnection SET status = 'E', next_attempt = NOW() WHERE external_id = 'call1';`)
 
 	// fire our retries
-	err = retryCalls(ctx, rt, "retry_test", "retry_test")
+	err = retryCalls(ctx, rt)
 	assert.NoError(t, err)
 
 	// should now be in wired state
-	testsuite.AssertQuery(t, db, `SELECT COUNT(*) FROM channels_channelconnection WHERE contact_id = $1 AND status = $2 AND external_id = $3`,
+	assertdb.Query(t, db, `SELECT COUNT(*) FROM channels_channelconnection WHERE contact_id = $1 AND status = $2 AND external_id = $3`,
 		testdata.Cathy.ID, models.ConnectionStatusWired, "call1").Returns(1)
 
 	// back to retry and make the channel inactive
@@ -65,10 +66,10 @@ func TestRetries(t *testing.T) {
 	db.MustExec(`UPDATE channels_channel SET is_active = FALSE WHERE id = $1`, testdata.TwilioChannel.ID)
 
 	models.FlushCache()
-	err = retryCalls(ctx, rt, "retry_test", "retry_test")
+	err = retryCalls(ctx, rt)
 	assert.NoError(t, err)
 
 	// this time should be failed
-	testsuite.AssertQuery(t, db, `SELECT COUNT(*) FROM channels_channelconnection WHERE contact_id = $1 AND status = $2 AND external_id = $3`,
+	assertdb.Query(t, db, `SELECT COUNT(*) FROM channels_channelconnection WHERE contact_id = $1 AND status = $2 AND external_id = $3`,
 		testdata.Cathy.ID, models.ConnectionStatusFailed, "call1").Returns(1)
 }

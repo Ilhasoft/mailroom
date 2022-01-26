@@ -73,7 +73,7 @@ func ResumeFlow(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, 
 		// if this flow just isn't available anymore, log this error
 		if err == models.ErrNotFound {
 			logrus.WithField("contact_uuid", session.Contact().UUID()).WithField("session_id", session.ID()).WithField("flow_id", session.CurrentFlowID()).Error("unable to find flow in resume")
-			return nil, models.ExitSessions(ctx, rt.DB, []models.SessionID{session.ID()}, models.ExitFailed, time.Now())
+			return nil, models.ExitSessions(ctx, rt.DB, []models.SessionID{session.ID()}, models.SessionStatusFailed)
 		}
 		return nil, errors.Wrapf(err, "error loading session flow: %d", session.CurrentFlowID())
 	}
@@ -104,7 +104,7 @@ func ResumeFlow(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, 
 	}
 
 	// write our updated session and runs
-	err = session.WriteUpdatedSession(txCTX, rt, tx, oa, fs, sprint, hook)
+	err = session.Update(txCTX, rt, tx, oa, fs, sprint, hook)
 	if err != nil {
 		tx.Rollback()
 		return nil, errors.Wrapf(err, "error updating session for resume")
@@ -204,14 +204,14 @@ func StartFlowBatch(
 	// this will build our trigger for each contact started
 	triggerBuilder := func(contact *flows.Contact) flows.Trigger {
 		if batch.ParentSummary() != nil {
-			tb := triggers.NewBuilder(oa.Env(), flow.FlowReference(), contact).FlowAction(history, batch.ParentSummary())
+			tb := triggers.NewBuilder(oa.Env(), flow.Reference(), contact).FlowAction(history, batch.ParentSummary())
 			if batchStart {
 				tb = tb.AsBatch()
 			}
 			return tb.Build()
 		}
 
-		tb := triggers.NewBuilder(oa.Env(), flow.FlowReference(), contact).Manual()
+		tb := triggers.NewBuilder(oa.Env(), flow.Reference(), contact).Manual()
 		if batch.Extra() != nil {
 			tb = tb.WithParams(params)
 		}
@@ -581,14 +581,14 @@ func StartFlowForContacts(
 	}
 
 	// build our list of contact ids
-	contactIDs := make([]flows.ContactID, len(triggers))
+	contactIDs := make([]models.ContactID, len(triggers))
 	for i := range triggers {
-		contactIDs[i] = triggers[i].Contact().ID()
+		contactIDs[i] = models.ContactID(triggers[i].Contact().ID())
 	}
 
 	// interrupt all our contacts if desired
 	if interrupt {
-		err = models.InterruptContactRuns(txCTX, tx, flow.FlowType(), contactIDs, start)
+		err = models.InterruptSessionsOfTypeForContacts(txCTX, tx, contactIDs, flow.FlowType())
 		if err != nil {
 			tx.Rollback()
 			return nil, errors.Wrap(err, "error interrupting contacts")
@@ -628,7 +628,7 @@ func StartFlowForContacts(
 
 			// interrupt this contact if appropriate
 			if interrupt {
-				err = models.InterruptContactRuns(txCTX, tx, flow.FlowType(), []flows.ContactID{session.Contact().ID()}, start)
+				err = models.InterruptSessionsOfTypeForContacts(txCTX, tx, []models.ContactID{models.ContactID(session.Contact().ID())}, flow.FlowType())
 				if err != nil {
 					tx.Rollback()
 					log.WithField("contact_uuid", session.Contact().UUID()).WithError(err).Errorf("error interrupting contact")

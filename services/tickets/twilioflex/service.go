@@ -275,6 +275,8 @@ func (s *service) Reopen(tickets []*models.Ticket, logHTTP flows.HTTPLogCallback
 
 func SendHistory(session flows.Session, contactID flows.ContactID, newFlexChannel *FlexChannel, logHTTP flows.HTTPLogCallback, restClient *Client, redactor utils.Redactor) {
 	after := session.Runs()[0].CreatedOn()
+	fmt.Println("After: ", after.String())
+	fmt.Println("ContactID: ", int(contactID))
 	cx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	// get messages for history

@@ -213,22 +213,19 @@ func RequestCallStartForConnection(ctx context.Context, rt *runtime.Runtime, cha
 	if maxCalls != "" {
 		maxCalls, _ := strconv.Atoi(maxCalls)
 
-		// max calls is set, lets see how many are currently active on this channel
-		if maxCalls > 0 {
-			count, err := models.ActiveChannelConnectionCount(ctx, rt.DB, channel.ID())
-			if err != nil {
-				return errors.Wrapf(err, "error finding number of active channel connections")
-			}
+		count, err := models.ActiveChannelConnectionCount(ctx, rt.DB, channel.ID())
+		if err != nil {
+			return errors.Wrapf(err, "error finding number of active channel connections")
+		}
 
-			// we are at max calls, do not move on
-			if count >= maxCalls {
-				logrus.WithField("channel_id", channel.ID()).Info("call being queued, max concurrent reached")
-				err := conn.MarkThrottled(ctx, rt.DB, time.Now())
-				if err != nil {
-					return errors.Wrapf(err, "error marking connection as throttled")
-				}
-				return nil
+		// we are at max calls, do not move on
+		if count >= maxCalls {
+			logrus.WithField("channel_id", channel.ID()).Info("call being queued, max concurrent reached")
+			err := conn.MarkThrottled(ctx, rt.DB, time.Now())
+			if err != nil {
+				return errors.Wrapf(err, "error marking connection as throttled")
 			}
+			return nil
 		}
 	}
 

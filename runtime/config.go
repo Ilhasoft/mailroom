@@ -68,14 +68,27 @@ type Config struct {
 	FCMKey            string `help:"the FCM API key used to notify Android relayers to sync"`
 	MailgunSigningKey string `help:"the signing key used to validate requests from mailgun"`
 
-	InstanceName        string `help:"the unique name of this instance used for analytics"`
-	LogLevel            string `help:"the logging level courier should use"`
-	UUIDSeed            int    `help:"seed to use for UUID generation in a testing environment"`
-	Version             string `help:"the version of this mailroom install"`
-	TimeoutTime         int    `help:"the amount of time to between every timeout queued"`
-	WenichatsServiceURL string `help:"wenichats external api url for ticketer service integration"`
+	InstanceName string `help:"the unique name of this instance used for analytics"`
+	LogLevel     string `help:"the logging level courier should use"`
+	UUIDSeed     int    `help:"seed to use for UUID generation in a testing environment"`
+	Version      string `help:"the version of this mailroom install"`
 
-	FlowStartBatchTimeout int `help:"timeout config for flow start batch"`
+	TimeoutTime           int    `help:"the amount of time to between every timeout queued"`
+	WenichatsServiceURL   string `help:"wenichats external api url for ticketer service integration"`
+	FlowStartBatchTimeout int    `help:"timeout config for flow start batch"`
+
+	MaxConcurrentEvents                  int    `help:"ivr max concurrent events limit to set when on day time period of activity of ivr channels"`
+	IVRStartHour                         int    `help:"ivr start hour"`
+	IVRStopHour                          int    `help:"ivr stop hour"`
+	IVRTimeZone                          string `help:"ivr time zone"`
+	IVRCancelCronStartHour               int    `help:"the cron hour to start cancel ivr calls queued"`
+	IVRFlowStartBatchTimeout             int    `help:"timeout of flow start batch"`
+	IVRFlowStartBatchExecutionsPerSecond int    `help:"executions per second of flow start batch calls"`
+
+	IVRConnRetryLimit                  int `help:"limit connection that be retryed"`
+	IVRRetryWorkers                    int `help:"the number of goroutines that will be used to handle each connection retry"`
+	IVRRetryTimeout                    int `help:"timeout to run a retry ivr connections"`
+	IVRRetryMaximumExecutionsPerSecond int `help:"maximum executions per second of retry calls"`
 }
 
 // NewDefaultConfig returns a new default configuration object
@@ -122,14 +135,27 @@ func NewDefaultConfig() *Config {
 		AWSAccessKeyID:     "",
 		AWSSecretAccessKey: "",
 
-		InstanceName:        hostname,
-		LogLevel:            "error",
-		UUIDSeed:            0,
-		Version:             "Dev",
-		TimeoutTime:         15,
-		WenichatsServiceURL: "https://chats-engine.dev.cloud.weni.ai/v1/external",
+		InstanceName: hostname,
+		LogLevel:     "error",
+		UUIDSeed:     0,
+		Version:      "Dev",
 
+		TimeoutTime:           60,
+		WenichatsServiceURL:   "https://chats-engine.dev.cloud.weni.ai/v1/external",
 		FlowStartBatchTimeout: 15,
+
+		MaxConcurrentEvents:                  1500,
+		IVRStartHour:                         8,
+		IVRStopHour:                          21,
+		IVRTimeZone:                          "Asia/Kolkata",
+		IVRCancelCronStartHour:               22,
+		IVRFlowStartBatchTimeout:             15,
+		IVRFlowStartBatchExecutionsPerSecond: 50,
+
+		IVRConnRetryLimit:                  500,
+		IVRRetryWorkers:                    5,
+		IVRRetryTimeout:                    10,
+		IVRRetryMaximumExecutionsPerSecond: 10,
 	}
 }
 

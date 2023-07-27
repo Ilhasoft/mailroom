@@ -3,6 +3,7 @@ package ivr
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"time"
 
 	"github.com/nyaruka/mailroom"
@@ -34,7 +35,7 @@ func handleFlowStartTask(ctx context.Context, rt *runtime.Runtime, task *queue.T
 
 // HandleFlowStartBatch starts a batch of contacts in an IVR flow
 func HandleFlowStartBatch(bg context.Context, rt *runtime.Runtime, batch *models.FlowStartBatch) error {
-	ctx, cancel := context.WithTimeout(bg, time.Minute*5)
+	ctx, cancel := context.WithTimeout(bg, time.Minute*time.Duration(rt.Config.IVRFlowStartBatchTimeout))
 	defer cancel()
 
 	// contacts we will exclude either because they are in a flow or have already been in this one
@@ -84,8 +85,19 @@ func HandleFlowStartBatch(bg context.Context, rt *runtime.Runtime, batch *models
 		return errors.Wrapf(err, "error loading contacts")
 	}
 
+	lastExecutionTime := time.Now()
+	minimumTimeBetweenEachExecution := time.Duration(math.Ceil(1e9 / float64(rt.Config.IVRFlowStartBatchExecutionsPerSecond)))
+
 	// for each contacts, request a call start
 	for _, contact := range contacts {
+		nextExecutionTime := -(time.Since(lastExecutionTime) - minimumTimeBetweenEachExecution)
+		if nextExecutionTime > 0 {
+			logrus.WithFields(logrus.Fields{
+				"elapsed": time.Since(time.Now()),
+			}).Infof("backing off call start for %v", nextExecutionTime)
+			time.Sleep(nextExecutionTime)
+		}
+
 		start := time.Now()
 
 		ctx, cancel := context.WithTimeout(bg, time.Minute)

@@ -15,14 +15,14 @@ import (
 
 type Job struct {
 	Id   int
-	conn *models.ChannelConnection
+	Conn *models.ChannelConnection
 }
 
 type JobResult struct {
 	Output string
 }
 
-func handleWork(id int, rt *runtime.Runtime, wg *sync.WaitGroup, jobChannel <-chan Job) {
+func HandleWork(id int, rt *runtime.Runtime, wg *sync.WaitGroup, jobChannel <-chan Job) {
 	defer wg.Done()
 	lastExecutionTime := time.Now()
 	minimumTimeBetweenEachExecution := time.Duration(math.Ceil(1e9 / float64(rt.Config.IVRRetryMaximumExecutionsPerSecond)))
@@ -36,14 +36,14 @@ func handleWork(id int, rt *runtime.Runtime, wg *sync.WaitGroup, jobChannel <-ch
 			logrus.Infof("Worker #%d not backing off \n", id)
 		}
 		lastExecutionTime = time.Now()
-		err := retryCall(id, rt, job.conn)
+		err := RetryCall(id, rt, job.Conn)
 		if err != nil {
 			logrus.Error(err)
 		}
 	}
 }
 
-func retryCall(workerId int, rt *runtime.Runtime, conn *models.ChannelConnection) error {
+func RetryCall(workerId int, rt *runtime.Runtime, conn *models.ChannelConnection) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*1)
 	defer cancel()
 	oa, err := models.GetOrgAssets(ctx, rt, conn.OrgID())

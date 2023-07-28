@@ -39,19 +39,19 @@ func init() {
 		if currentHour >= rt.Config.IVRStartHour && currentHour < rt.Config.IVRStopHour {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute*time.Duration(rt.Config.IVRRetryTimeout))
 			defer cancel()
-			return retryCallsInWorkerPool(ctx, rt)
+			return RetryCallsInWorkerPool(ctx, rt)
 		}
 		return nil
 	})
 
-	mailroom.RegisterCron(clearIVRLock, time.Hour, false, clearStuckChannelConnections)
+	mailroom.RegisterCron(clearIVRLock, time.Hour, false, ClearStuckChannelConnections)
 
 	mailroom.RegisterCron(changeMaxConnNightLock, time.Minute*10, false, func(ctx context.Context, rt *runtime.Runtime) error {
 		currentHour := time.Now().In(location).Hour()
 		if currentHour >= rt.Config.IVRStopHour || currentHour < rt.Config.IVRStartHour {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute*10)
 			defer cancel()
-			return changeMaxConnectionsConfig(ctx, rt, "TW", 0)
+			return ChangeMaxConnectionsConfig(ctx, rt, "TW", 0)
 		}
 		return nil
 	})
@@ -61,7 +61,7 @@ func init() {
 		if currentHour >= rt.Config.IVRStartHour && currentHour < rt.Config.IVRStopHour {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute*10)
 			defer cancel()
-			return changeMaxConnectionsConfig(ctx, rt, "TW", rt.Config.MaxConcurrentEvents)
+			return ChangeMaxConnectionsConfig(ctx, rt, "TW", rt.Config.MaxConcurrentEvents)
 		}
 		return nil
 	})
@@ -71,7 +71,7 @@ func init() {
 		if currentHour == rt.Config.IVRCancelCronStartHour {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute*20)
 			defer cancel()
-			return cancelCalls(ctx, rt)
+			return CancelCalls(ctx, rt)
 		}
 		return nil
 	})
@@ -79,7 +79,7 @@ func init() {
 }
 
 // retryCallsInWorkerPoll looks for calls that need to be retried and retries then
-func retryCallsInWorkerPool(ctx context.Context, rt *runtime.Runtime) error {
+func RetryCallsInWorkerPool(ctx context.Context, rt *runtime.Runtime) error {
 	log := logrus.WithField("comp", "ivr_cron_retryer")
 	start := time.Now()
 
@@ -90,7 +90,7 @@ func retryCallsInWorkerPool(ctx context.Context, rt *runtime.Runtime) error {
 
 	var jobs []Job
 	for i := 0; i < len(conns); i++ {
-		jobs = append(jobs, Job{Id: i, conn: conns[i]})
+		jobs = append(jobs, Job{Id: i, Conn: conns[i]})
 	}
 
 	var (
@@ -101,7 +101,7 @@ func retryCallsInWorkerPool(ctx context.Context, rt *runtime.Runtime) error {
 	wg.Add(rt.Config.IVRRetryWorkers)
 
 	for i := 0; i < rt.Config.IVRRetryWorkers; i++ {
-		go handleWork(i, rt, &wg, jobChannel)
+		go HandleWork(i, rt, &wg, jobChannel)
 	}
 
 	for _, job := range jobs {
@@ -116,8 +116,8 @@ func retryCallsInWorkerPool(ctx context.Context, rt *runtime.Runtime) error {
 	return nil
 }
 
-// retryCalls looks for calls that need to be retried and retries them
-func retryCalls(ctx context.Context, rt *runtime.Runtime) error {
+// RetryCalls looks for calls that need to be retried and retries them
+func RetryCalls(ctx context.Context, rt *runtime.Runtime) error {
 	log := logrus.WithField("comp", "ivr_cron_retryer")
 	start := time.Now()
 
@@ -183,7 +183,7 @@ func retryCalls(ctx context.Context, rt *runtime.Runtime) error {
 	return nil
 }
 
-func clearStuckChannelConnections(ctx context.Context, rt *runtime.Runtime) error {
+func ClearStuckChannelConnections(ctx context.Context, rt *runtime.Runtime) error {
 	log := logrus.WithField("comp", "ivr_cron_cleaner")
 	start := time.Now()
 
@@ -205,7 +205,7 @@ func clearStuckChannelConnections(ctx context.Context, rt *runtime.Runtime) erro
 	return nil
 }
 
-func cancelCalls(ctx context.Context, rt *runtime.Runtime) error {
+func CancelCalls(ctx context.Context, rt *runtime.Runtime) error {
 	log := logrus.WithField("comp", "ivr_cron_canceler")
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, time.Minute*15)
@@ -226,7 +226,7 @@ func cancelCalls(ctx context.Context, rt *runtime.Runtime) error {
 	return nil
 }
 
-func changeMaxConnectionsConfig(ctx context.Context, rt *runtime.Runtime, channelType string, maxConcurrentEventsToSet int) error {
+func ChangeMaxConnectionsConfig(ctx context.Context, rt *runtime.Runtime, channelType string, maxConcurrentEventsToSet int) error {
 	log := logrus.WithField("comp", "ivr_cron_change_max_connections")
 	start := time.Now()
 

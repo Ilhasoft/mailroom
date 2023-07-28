@@ -1,13 +1,15 @@
-package ivr
+package ivr_test
 
 import (
 	"encoding/json"
 	"sync"
 	"testing"
 
+	"github.com/nyaruka/gocommon/dbutil/assertdb"
 	"github.com/nyaruka/mailroom/core/ivr"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/core/queue"
+	ivrtasks "github.com/nyaruka/mailroom/core/tasks/ivr"
 	"github.com/nyaruka/mailroom/core/tasks/starts"
 	"github.com/nyaruka/mailroom/testsuite"
 	"github.com/nyaruka/mailroom/testsuite/testdata"
@@ -23,13 +25,13 @@ func TestHandleWork(t *testing.T) {
 	defer testsuite.Reset(testsuite.ResetAll)
 
 	// register our mock client
-	ivr.RegisterServiceType(models.ChannelType("ZZ"), newMockProvider)
+	ivr.RegisterServiceType(models.ChannelType("ZZ"), NewMockProvider)
 
 	// update our twilio channel to be of type 'ZZ' and set max_concurrent_events to 1
 	db.MustExec(`UPDATE channels_channel SET channel_type = 'ZZ', config = '{"max_concurrent_events": 1}' WHERE id = $1`, testdata.TwilioChannel.ID)
 
 	// create a flow start for cathy
-	start := models.NewFlowStart(testdata.Org1.ID, models.StartTypeTrigger, models.FlowTypeVoice, testdata.IVRFlow.ID, models.DoRestartParticipants, models.DoIncludeActive).
+	start := models.NewFlowStart(testdata.Org1.ID, models.StartTypeTrigger, models.FlowTypeVoice, testdata.IVRFlow.ID).
 		WithContactIDs([]models.ContactID{testdata.Cathy.ID})
 
 	// call our master starter
@@ -45,9 +47,9 @@ func TestHandleWork(t *testing.T) {
 
 	client.callError = nil
 	client.callID = ivr.CallID("call1")
-	err = HandleFlowStartBatch(ctx, rt, batch)
+	err = ivrtasks.HandleFlowStartBatch(ctx, rt, batch)
 	assert.NoError(t, err)
-	testsuite.AssertQuery(t, db, `SELECT COUNT(*) FROM channels_channelconnection WHERE contact_id = $1 AND status = $2 AND external_id = $3`,
+	assertdb.Query(t, db, `SELECT COUNT(*) FROM channels_channelconnection WHERE contact_id = $1 AND status = $2 AND external_id = $3`,
 		testdata.Cathy.ID, models.ConnectionStatusWired, "call1").Returns(1)
 
 	// change our call to be errored instead of wired
@@ -57,11 +59,11 @@ func TestHandleWork(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, len(conns), 1)
 
-	err = retryCall(0, rt, conns[0])
+	err = ivrtasks.RetryCall(0, rt, conns[0])
 	assert.NoError(t, err)
 
 	// should now be in wired state
-	testsuite.AssertQuery(t, db, `SELECT COUNT(*) FROM channels_channelconnection WHERE contact_id = $1 AND status = $2 AND external_id = $3`,
+	assertdb.Query(t, db, `SELECT COUNT(*) FROM channels_channelconnection WHERE contact_id = $1 AND status = $2 AND external_id = $3`,
 		testdata.Cathy.ID, models.ConnectionStatusWired, "call1").Returns(1)
 
 	// back to retry and make the channel inactive
@@ -74,15 +76,15 @@ func TestHandleWork(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, len(conns), 1)
 
-	jobs := []Job{{Id: 1, conn: conns[0]}}
+	jobs := []ivrtasks.Job{{Id: 1, Conn: conns[0]}}
 
 	var (
 		wg         sync.WaitGroup
-		jobChannel = make(chan Job)
+		jobChannel = make(chan ivrtasks.Job)
 	)
 	wg.Add(1)
 
-	go handleWork(0, rt, &wg, jobChannel)
+	go ivrtasks.HandleWork(0, rt, &wg, jobChannel)
 
 	for _, job := range jobs {
 		jobChannel <- job
@@ -92,6 +94,6 @@ func TestHandleWork(t *testing.T) {
 	wg.Wait()
 
 	// this time should be failed
-	testsuite.AssertQuery(t, db, `SELECT COUNT(*) FROM channels_channelconnection WHERE contact_id = $1 AND status = $2 AND external_id = $3`,
+	assertdb.Query(t, db, `SELECT COUNT(*) FROM channels_channelconnection WHERE contact_id = $1 AND status = $2 AND external_id = $3`,
 		testdata.Cathy.ID, models.ConnectionStatusFailed, "call1").Returns(1)
 }

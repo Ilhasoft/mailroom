@@ -26,16 +26,14 @@ const (
 	cancelIVRCallsLock     = "cancel_ivr_calls"
 )
 
-var location *time.Location
+var locationTimezone *time.Location
 
 func init() {
 	mailroom.RegisterCron("retry_ivr_calls", time.Minute, false, func(ctx context.Context, rt *runtime.Runtime) error {
-		var err error
-		location, err = time.LoadLocation(rt.Config.IVRTimeZone)
-		if err != nil {
+		if err := SetupLocationTimezone(rt.Config.IVRTimeZone); err != nil {
 			return err
 		}
-		currentHour := time.Now().In(location).Hour()
+		currentHour := time.Now().In(locationTimezone).Hour()
 		if currentHour >= rt.Config.IVRStartHour && currentHour < rt.Config.IVRStopHour {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute*time.Duration(rt.Config.IVRRetryTimeout))
 			defer cancel()
@@ -47,7 +45,10 @@ func init() {
 	mailroom.RegisterCron(clearIVRLock, time.Hour, false, ClearStuckChannelConnections)
 
 	mailroom.RegisterCron(changeMaxConnNightLock, time.Minute*10, false, func(ctx context.Context, rt *runtime.Runtime) error {
-		currentHour := time.Now().In(location).Hour()
+		if err := SetupLocationTimezone(rt.Config.IVRTimeZone); err != nil {
+			return err
+		}
+		currentHour := time.Now().In(locationTimezone).Hour()
 		if currentHour >= rt.Config.IVRStopHour || currentHour < rt.Config.IVRStartHour {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute*10)
 			defer cancel()
@@ -57,7 +58,10 @@ func init() {
 	})
 
 	mailroom.RegisterCron(changeMaxConnDayLock, time.Minute*10, false, func(ctx context.Context, rt *runtime.Runtime) error {
-		currentHour := time.Now().In(location).Hour()
+		if err := SetupLocationTimezone(rt.Config.IVRTimeZone); err != nil {
+			return err
+		}
+		currentHour := time.Now().In(locationTimezone).Hour()
 		if currentHour >= rt.Config.IVRStartHour && currentHour < rt.Config.IVRStopHour {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute*10)
 			defer cancel()
@@ -67,7 +71,10 @@ func init() {
 	})
 
 	mailroom.RegisterCron(cancelIVRCallsLock, time.Hour*1, false, func(ctx context.Context, rt *runtime.Runtime) error {
-		currentHour := time.Now().In(location).Hour()
+		if err := SetupLocationTimezone(rt.Config.IVRTimeZone); err != nil {
+			return err
+		}
+		currentHour := time.Now().In(locationTimezone).Hour()
 		if currentHour == rt.Config.IVRCancelCronStartHour {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute*20)
 			defer cancel()
@@ -360,4 +367,20 @@ type Channel struct {
 	ChannelType string                 `db:"channel_type" json:"channel_type,omitempty"`
 	Config      map[string]interface{} `db:"config" json:"config,omitempty"`
 	IsActive    bool                   `db:"is_active" json:"is_active,omitempty"`
+}
+
+func SetupLocationTimezone(timezone string) error {
+	if locationTimezone != nil {
+		return nil
+	}
+	var err error
+	locationTimezone, err = time.LoadLocation(timezone)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func GetLocationTimezone() *time.Location {
+	return locationTimezone
 }

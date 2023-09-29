@@ -3,6 +3,7 @@ package ivr_test
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/nyaruka/gocommon/dbutil/assertdb"
 	"github.com/nyaruka/mailroom/core/ivr"
@@ -247,4 +248,20 @@ func TestUpdateMaxChannelsConnection(t *testing.T) {
 
 	assertdb.Query(t, db, `SELECT COUNT(*) FROM channels_channelconnection WHERE contact_id = $1 AND status = $2`,
 		testdata.Cathy.ID, models.ConnectionStatusWired).Returns(1)
+}
+
+func TestSetupLocation(t *testing.T) {
+	err := ivrtasks.SetupLocationTimezone(".invalid.")
+	assert.Error(t, err)
+	assert.ErrorContains(t, err, "unknown time zone .invalid.")
+
+	location := ivrtasks.GetLocationTimezone()
+	assert.Nil(t, location)
+	timezone := "Asia/Kolkata"
+	ivrtasks.SetupLocationTimezone(timezone)
+	location = ivrtasks.GetLocationTimezone()
+	assert.NotNil(t, location)
+	expectedLocation, err := time.LoadLocation("Asia/Kolkata")
+	assert.NoError(t, err)
+	assert.Equal(t, expectedLocation, location)
 }

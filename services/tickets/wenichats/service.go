@@ -1,18 +1,18 @@
 package wenichats
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/pkg/errors"
 
 	"github.com/nyaruka/gocommon/httpx"
 	"github.com/nyaruka/gocommon/jsonx"
+	"github.com/nyaruka/gocommon/stringsx"
+	"github.com/nyaruka/goflow/envs"
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/goflow/utils"
 	"github.com/nyaruka/mailroom/core/models"
@@ -53,7 +53,7 @@ type service struct {
 	rtConfig   *runtime.Config
 	restClient *Client
 	ticketer   *flows.Ticketer
-	redactor   utils.Redactor
+	redactor   stringsx.Redactor
 	sectorUUID string
 }
 
@@ -71,7 +71,7 @@ func NewService(rtCfg *runtime.Config, httpClient *http.Client, httpRetries *htt
 			rtConfig:   rtCfg,
 			restClient: NewClient(httpClient, httpRetries, baseURL, authToken),
 			ticketer:   ticketer,
-			redactor:   utils.NewRedactor(flows.RedactionMask, authToken),
+			redactor:   stringsx.NewRedactor(flows.RedactionMask, authToken),
 			sectorUUID: sectorUUID,
 		}, nil
 	}
@@ -79,9 +79,8 @@ func NewService(rtCfg *runtime.Config, httpClient *http.Client, httpRetries *htt
 	return nil, errors.New("missing project_auth or sector_uuid")
 }
 
-func (s *service) Open(session flows.Session, topic *flows.Topic, body string, assignee *flows.User, logHTTP flows.HTTPLogCallback) (*flows.Ticket, error) {
+func (s *service) Open(env envs.Environment, contact *flows.Contact, topic *flows.Topic, body string, assignee *flows.User, logHTTP flows.HTTPLogCallback) (*flows.Ticket, error) {
 	ticket := flows.OpenTicket(s.ticketer, topic, body, assignee)
-	contact := session.Contact()
 
 	roomData := &RoomRequest{Contact: &Contact{}, CustomFields: map[string]interface{}{}}
 
@@ -99,8 +98,8 @@ func (s *service) Open(session flows.Session, topic *flows.Topic, body string, a
 	roomData.Contact.Name = contact.Name()
 	roomData.SectorUUID = s.sectorUUID
 	roomData.QueueUUID = string(topic.UUID())
-	roomData.Contact.URN = session.Contact().PreferredURN().URN().String()
-	roomData.FlowUUID = session.Runs()[0].Flow().UUID()
+	roomData.Contact.URN = contact.PreferredURN().URN().String()
+	// roomData.FlowUUID = session.Runs()[0].Flow().UUID()
 	roomData.Contact.Groups = groups
 
 	extra := &struct {
@@ -143,39 +142,40 @@ func (s *service) Open(session flows.Session, topic *flows.Topic, body string, a
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create wenichats room webhook")
 	}
+	// do not use send message history, we do not have access to Run's CreatedOn()
 
 	// get messages for history
-	after := session.Runs()[0].CreatedOn()
-	cx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	msgs, err := models.SelectContactMessages(cx, db, int(contact.ID()), after)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get history messages")
-	}
+	// after := session.Runs()[0].CreatedOn()
+	// cx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	// defer cancel()
+	// msgs, err := models.SelectContactMessages(cx, db, int(contact.ID()), after)
+	// if err != nil {
+	// 	return nil, errors.Wrap(err, "failed to get history messages")
+	// }
 
-	//send history
-	for _, msg := range msgs {
-		var direction string
-		if msg.Direction() == "I" {
-			direction = "incoming"
-		} else {
-			direction = "outgoing"
-		}
-		m := &MessageRequest{
-			Room:        newRoom.UUID,
-			Text:        msg.Text(),
-			CreatedOn:   msg.CreatedOn(),
-			Attachments: parseMsgAttachments(msg.Attachments()),
-			Direction:   direction,
-		}
-		_, trace, err = s.restClient.CreateMessage(m)
-		if trace != nil {
-			logHTTP(flows.NewHTTPLog(trace, flows.HTTPStatusFromCode, s.redactor))
-		}
-		if err != nil {
-			return nil, errors.Wrap(err, "error calling wenichats to create a history message")
-		}
-	}
+	// //send history
+	// for _, msg := range msgs {
+	// 	var direction string
+	// 	if msg.Direction() == "I" {
+	// 		direction = "incoming"
+	// 	} else {
+	// 		direction = "outgoing"
+	// 	}
+	// 	m := &MessageRequest{
+	// 		Room:        newRoom.UUID,
+	// 		Text:        msg.Text(),
+	// 		CreatedOn:   msg.CreatedOn(),
+	// 		Attachments: parseMsgAttachments(msg.Attachments()),
+	// 		Direction:   direction,
+	// 	}
+	// 	_, trace, err = s.restClient.CreateMessage(m)
+	// 	if trace != nil {
+	// 		logHTTP(flows.NewHTTPLog(trace, flows.HTTPStatusFromCode, s.redactor))
+	// 	}
+	// 	if err != nil {
+	// 		return nil, errors.Wrap(err, "error calling wenichats to create a history message")
+	// 	}
+	// }
 
 	ticket.SetExternalID(newRoom.UUID)
 	return ticket, nil

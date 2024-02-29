@@ -83,6 +83,8 @@ func init() {
 		return nil
 	})
 
+	mailroom.RegisterCron(expireIVRLock, time.Minute, false, ExpireCalls)
+
 }
 
 // retryCallsInWorkerPoll looks for calls that need to be retried and retries then
@@ -278,6 +280,61 @@ func ChangeMaxConnectionsConfig(ctx context.Context, rt *runtime.Runtime, channe
 	}
 
 	log.WithField("count", len(ivrChannels)).WithField("elapsed", time.Since(start)).Info("channels that have max_concurrent_events updated")
+
+	return nil
+}
+
+// expireCalls looks for calls that should be expired and ends them
+func ExpireCalls(ctx context.Context, rt *runtime.Runtime) error {
+	log := logrus.WithField("comp", "ivr_cron_expirer")
+	start := time.Now()
+
+	ctx, cancel := context.WithTimeout(ctx, time.Minute*10)
+	defer cancel()
+
+	// select our expired runs
+	rows, err := rt.DB.QueryxContext(ctx, selectExpiredRunsSQL)
+	if err != nil {
+		return errors.Wrapf(err, "error querying for expired runs")
+	}
+	defer rows.Close()
+
+	expiredRuns := make([]models.FlowRunID, 0, 100)
+	expiredSessions := make([]models.SessionID, 0, 100)
+
+	for rows.Next() {
+		exp := &RunExpiration{}
+		err := rows.StructScan(exp)
+		if err != nil {
+			return errors.Wrapf(err, "error scanning expired run")
+		}
+
+		// add the run and session to those we need to expire
+		expiredRuns = append(expiredRuns, exp.RunID)
+		expiredSessions = append(expiredSessions, exp.SessionID)
+
+		// load our connection
+		conn, err := models.SelectChannelConnection(ctx, rt.DB, exp.ConnectionID)
+		if err != nil {
+			log.WithError(err).WithField("connection_id", exp.ConnectionID).Error("unable to load connection")
+			continue
+		}
+
+		// hang up our call
+		err = ivr.HangupCall(ctx, rt, conn)
+		if err != nil {
+			log.WithError(err).WithField("connection_id", conn.ID()).Error("error hanging up call")
+		}
+	}
+
+	// now expire our runs and sessions
+	if len(expiredRuns) > 0 {
+		err := models.ExpireRunsAndSessions(ctx, rt.DB, expiredRuns, expiredSessions)
+		if err != nil {
+			log.WithError(err).Error("error expiring runs and sessions for expired calls")
+		}
+		log.WithField("count", len(expiredRuns)).WithField("elapsed", time.Since(start)).Info("expired and hung up on channel connections")
+	}
 
 	return nil
 }

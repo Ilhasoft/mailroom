@@ -102,7 +102,7 @@ func handleMsgCreated(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa 
 					languageCode = ""
 				}
 
-				event.Msg.TextLanguage = envs.Language(languageCode)
+				event.Msg.Locale_ = envs.Locale(languageCode)
 			}
 		}
 	}

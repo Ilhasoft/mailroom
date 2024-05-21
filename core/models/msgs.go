@@ -439,8 +439,8 @@ func buildMsgMetadata(m *flows.MsgOut) map[string]interface{} {
 	if m.Topic() != flows.NilMsgTopic {
 		metadata["topic"] = string(m.Topic())
 	}
-	if m.TextLanguage != "" {
-		metadata["text_language"] = m.TextLanguage
+	if m.Locale() != "" {
+		metadata["locale"] = m.Locale_
 	}
 	return metadata
 }

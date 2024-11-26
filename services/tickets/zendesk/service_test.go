@@ -26,7 +26,7 @@ import (
 const fieldTicket = `{"message":"Cookies","priority":"high","subject":"Where are my cookies?","description":"I want to know where is my cookie.","tags": ["TAG_01","TAG_02"],"custom_fields":[{"id":"21938362","value":"hd_3000"}]}`
 
 func TestOpenAndForward(t *testing.T) {
-	ctx, rt, _, _ := testsuite.Get()
+	ctx, rt := testsuite.Runtime()
 
 	session, _, err := test.CreateTestSession("", envs.RedactionPolicyNone)
 	require.NoError(t, err)
@@ -135,7 +135,7 @@ func TestOpenAndForward(t *testing.T) {
 }
 
 func TestCloseAndReopen(t *testing.T) {
-	_, rt, _, _ := testsuite.Get()
+	_, rt := testsuite.Runtime()
 
 	defer testsuite.Reset(testsuite.ResetData)
 

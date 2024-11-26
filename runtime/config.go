@@ -7,9 +7,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/nyaruka/goflow/utils"
 	"github.com/pkg/errors"
-	"gopkg.in/go-playground/validator.v9"
 )
 
 func init() {
@@ -48,9 +48,10 @@ type Config struct {
 	MaxValueLength       int    `help:"the maximum size in characters for contact field values and run result values"`
 	SessionStorage       string `validate:"omitempty,session_storage"         help:"where to store session output (s3|db)"`
 
-	Elastic         string `validate:"url" help:"the URL of your ElasticSearch instance"`
-	ElasticUsername string `help:"the username for ElasticSearch if using basic auth"`
-	ElasticPassword string `help:"the password for ElasticSearch if using basic auth"`
+	Elastic              string `validate:"url" help:"the URL of your ElasticSearch instance"`
+	ElasticUsername      string `help:"the username for ElasticSearch if using basic auth"`
+	ElasticPassword      string `help:"the password for ElasticSearch if using basic auth"`
+	ElasticContactsIndex string `help:"the name of index alias for contacts"`
 
 	S3Endpoint           string `help:"the S3 endpoint we will write attachments to"`
 	S3Region             string `help:"the S3 region we will write attachments to"`
@@ -113,16 +114,17 @@ func NewDefaultConfig() *Config {
 		MaxValueLength:       640,
 		SessionStorage:       "db",
 
-		Elastic:         "http://localhost:9200",
-		ElasticUsername: "",
-		ElasticPassword: "",
+		Elastic:              "http://localhost:9200",
+		ElasticUsername:      "",
+		ElasticPassword:      "",
+		ElasticContactsIndex: "contacts",
 
 		S3Endpoint:          "https://s3.amazonaws.com",
 		S3Region:            "us-east-1",
-		S3AttachmentsBucket: "mailroom-attachments",
-		S3AttachmentsPrefix: "/attachments/",
-		S3SessionBucket:     "mailroom-sessions",
-		S3SessionPrefix:     "/",
+		S3AttachmentsBucket: "attachments-bucket",
+		S3AttachmentsPrefix: "attachments/",
+		S3SessionsBucket:    "sessions-bucket",
+		S3LogsBucket:        "logs-bucket",
 		S3DisableSSL:        false,
 		S3ForcePathStyle:    false,
 

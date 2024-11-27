@@ -365,9 +365,6 @@ func buildMsgMetadata(m *flows.MsgOut) map[string]interface{} {
 	if m.Topic() != flows.NilMsgTopic {
 		metadata["topic"] = string(m.Topic())
 	}
-	if m.TextLanguage != "" {
-		metadata["text_language"] = m.TextLanguage
-	}
 	return metadata
 }
 
@@ -552,8 +549,7 @@ SELECT
 	channel_id,
 	contact_id,
 	contact_urn_id,
-	org_id,
-	topup_id
+	org_id
 FROM
 	msgs_msg
 WHERE

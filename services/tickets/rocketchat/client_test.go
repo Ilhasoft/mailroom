@@ -42,7 +42,7 @@ func TestCreateRoom(t *testing.T) {
 	assert.EqualError(t, err, "unable to connect to server")
 
 	_, _, err = client.CreateRoom(room)
-	assert.EqualError(t, err, "Could not find a department for name: kitchen")
+	assert.EqualError(t, err, "There's no agents online")
 
 	id, trace, err := client.CreateRoom(room)
 	assert.NoError(t, err)

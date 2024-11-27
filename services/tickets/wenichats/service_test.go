@@ -26,7 +26,7 @@ import (
 )
 
 func TestOpenAndForward(t *testing.T) {
-	ctx, rt, _, _ := testsuite.Get()
+	ctx, rt := testsuite.Runtime()
 	testsuite.Reset(testsuite.ResetData | testsuite.ResetStorage)
 
 	defer dates.SetNowSource(dates.DefaultNowSource)
@@ -264,7 +264,7 @@ func TestOpenAndForward(t *testing.T) {
 }
 
 func TestCloseAndReopen(t *testing.T) {
-	_, rt, _, _ := testsuite.Get()
+	_, rt := testsuite.Runtime()
 
 	defer uuids.SetGenerator(uuids.DefaultGenerator)
 	defer httpx.SetRequestor(httpx.DefaultRequestor)

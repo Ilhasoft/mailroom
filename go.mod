@@ -33,6 +33,8 @@ require (
 	golang.org/x/exp v0.0.0-20230713183714-613f0c0eb8a1
 )
 
+require gopkg.in/go-playground/validator.v9 v9.31.0 // indirect
+
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/Shopify/gomail v0.0.0-20220729171026-0784ece65e69 // indirect

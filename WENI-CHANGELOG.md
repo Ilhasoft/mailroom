@@ -1,3 +1,7 @@
+1.4.19-mailroom-8.2.0
+----------
+ * update mailroom to 8.2.0 
+
 1.4.19-mailroom-7.5.35
 ----------
  * update mailroom to 7.5.35 

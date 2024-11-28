@@ -101,8 +101,6 @@ func handleMsgCreated(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa 
 				if _, valid := validLanguageCodes[languageCode]; !valid {
 					languageCode = ""
 				}
-
-				event.Msg.TextLanguage = envs.Language(languageCode)
 			}
 		}
 	}

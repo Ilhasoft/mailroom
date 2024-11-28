@@ -20,7 +20,7 @@ import (
 
 func init() {
 	base := "/mr/tickets/types/twilioflex"
-	web.RegisterJSONRoute(http.MethodPost, base+"/event_callback/{ticketer:[a-f0-9\\-]+}/{ticket:[a-f0-9\\-]+}", web.WithHTTPLogs(handleEventCallback))
+	web.RegisterRoute(http.MethodPost, base+"/event_callback/{ticketer:[a-f0-9\\-]+}/{ticket:[a-f0-9\\-]+}", web.MarshaledResponse(web.WithHTTPLogs(handleEventCallback)))
 }
 
 type eventCallbackRequest struct {

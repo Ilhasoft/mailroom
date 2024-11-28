@@ -16,7 +16,6 @@ import (
 
 	"github.com/nyaruka/gocommon/httpx"
 	"github.com/nyaruka/gocommon/urns"
-	"github.com/nyaruka/goflow/envs"
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/goflow/flows/events"
 	"github.com/nyaruka/goflow/flows/routers/waits/hints"
@@ -63,7 +62,7 @@ const (
 )
 
 // https://www.twilio.com/docs/voice/twiml/say
-var supportedSayLanguages = utils.StringSet([]string{
+var supportedSayLanguages = utils.Set([]string{
 	"da-DK",
 	"de-DE",
 	"en-AU",
@@ -137,7 +136,9 @@ func NewService(httpClient *http.Client, accountSID string, authToken string) iv
 }
 
 func (s *service) DownloadMedia(url string) (*http.Response, error) {
-	return http.Get(url)
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	req.SetBasicAuth(s.accountSID, s.authToken)
+	return http.DefaultClient.Do(req)
 }
 
 func (s *service) CheckStartRequest(r *http.Request) models.CallError {
@@ -461,11 +462,8 @@ func ResponseForSprint(cfg *runtime.Config, urn urns.URN, resumeURL string, es [
 		switch event := e.(type) {
 		case *events.IVRCreatedEvent:
 			if len(event.Msg.Attachments()) == 0 {
-				urnCountry := envs.DeriveCountryFromTel(urn.Path())
-				msgLocale := envs.NewLocale(event.Msg.TextLanguage, urnCountry)
-
 				// only send locale if it's a supported say language for Twilio
-				msgLocaleCode := msgLocale.ToBCP47()
+				msgLocaleCode := event.Msg.Locale().ToBCP47()
 				if _, valid := supportedSayLanguages[msgLocaleCode]; !valid {
 					msgLocaleCode = ""
 				}
@@ -534,5 +532,8 @@ func ResponseForSprint(cfg *runtime.Config, urn urns.URN, resumeURL string, es [
 }
 
 func (s *service) RedactValues(ch *models.Channel) []string {
-	return []string{ch.ConfigValue(authTokenConfig, "")}
+	return []string{
+		httpx.BasicAuth(ch.ConfigValue(accountSIDConfig, ""), ch.ConfigValue(authTokenConfig, "")),
+		ch.ConfigValue(authTokenConfig, ""),
+	}
 }

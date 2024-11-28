@@ -3,19 +3,19 @@ package twilioflex_test
 import (
 	"testing"
 	"time"
+
 	"github.com/nyaruka/mailroom/testsuite"
 	"github.com/nyaruka/mailroom/testsuite/testdata"
-	"github.com/nyaruka/mailroom/web"
 )
 
 func TestEventCallback(t *testing.T) {
-	ctx, rt, db, _ := testsuite.Get()
+	ctx, rt := testsuite.Runtime()
 	testsuite.Reset(testsuite.ResetData | testsuite.ResetStorage)
 
 	defer testsuite.Reset(testsuite.ResetData | testsuite.ResetStorage)
 
 	ticket := testdata.InsertOpenTicket(
-		db,
+		rt,
 		testdata.Org1,
 		testdata.Cathy,
 		testdata.Twilioflex,
@@ -26,5 +26,5 @@ func TestEventCallback(t *testing.T) {
 		testdata.Viewer,
 	)
 
-	web.RunWebTests(t, ctx, rt, "testdata/event_callback.json", map[string]string{"cathy_ticket_uuid": string(ticket.UUID)})
+	testsuite.RunWebTests(t, ctx, rt, "testdata/event_callback.json", map[string]string{"cathy_ticket_uuid": string(ticket.UUID)})
 }

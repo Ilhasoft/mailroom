@@ -58,6 +58,7 @@ type Config struct {
 	S3AttachmentsBucket  string `help:"the S3 bucket we will write attachments to"`
 	S3AttachmentsPrefix  string `help:"the prefix that will be added to attachment filenames"`
 	S3SessionsBucket     string `help:"the S3 bucket we will write attachments to"`
+	S3LogsBucket         string `help:"the S3 bucket we will write logs to"`
 	S3SessionPrefix      string `help:"the prefix that will be added to attachment filenames"`
 	S3MediaPrefixZendesk string `help:"the prefix that will be added to file attachment names for Zendesk tickets"`
 	S3DisableSSL         bool   `help:"whether we disable SSL when accessing S3. Should always be set to False unless you're hosting an S3 compatible service within a secure internal network"`
@@ -124,6 +125,7 @@ func NewDefaultConfig() *Config {
 		S3AttachmentsBucket: "attachments-bucket",
 		S3AttachmentsPrefix: "attachments/",
 		S3SessionsBucket:    "sessions-bucket",
+		S3LogsBucket:        "logs-bucket",
 		S3DisableSSL:        false,
 		S3ForcePathStyle:    false,
 

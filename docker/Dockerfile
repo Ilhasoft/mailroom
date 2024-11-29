@@ -19,6 +19,8 @@ FROM alpine:3.18
 COPY --from=builder /go/bin/ /app/
 COPY --from=builder /app/docs /app/docs
 
+RUN apk add --no-cache tzdata
+
 WORKDIR /app
 
 EXPOSE 8000

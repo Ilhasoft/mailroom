@@ -131,6 +131,7 @@ func (mr *Mailroom) Start() error {
 		}
 		mr.rt.AttachmentStorage = storage.NewS3(s3Client, mr.rt.Config.S3AttachmentsBucket, c.S3Region, s3.BucketCannedACLPublicRead, 32)
 		mr.rt.SessionStorage = storage.NewS3(s3Client, mr.rt.Config.S3SessionsBucket, c.S3Region, s3.ObjectCannedACLPrivate, 32)
+		mr.rt.LogStorage = storage.NewS3(s3Client, mr.rt.Config.S3LogsBucket, c.S3Region, s3.ObjectCannedACLPrivate, 32)
 	} else {
 		mr.rt.AttachmentStorage = storage.NewFS("_storage/attachments", 0766)
 		mr.rt.SessionStorage = storage.NewFS("_storage/sessions", 0766)

@@ -549,21 +549,3 @@ func insertTestSession(t *testing.T, ctx context.Context, rt *runtime.Runtime, o
 
 	return session
 }
-
-func TestSelectContactMessages(t *testing.T) {
-	ctx, rt := testsuite.Runtime()
-	defer testsuite.Reset(testsuite.ResetData)
-
-	thisMoment := time.Now()
-
-	testdata.InsertIncomingMsg(rt, testdata.Org1, testdata.TwilioChannel, testdata.Cathy, "in 1", models.MsgStatusHandled)
-	testdata.InsertOutgoingMsg(rt, testdata.Org1, testdata.TwilioChannel, testdata.Cathy, "out 1", []utils.Attachment{"image/jpeg:hi.jpg"}, models.MsgStatusSent, false)
-	testdata.InsertOutgoingMsg(rt, testdata.Org1, testdata.TwilioChannel, testdata.Cathy, "out 2", nil, models.MsgStatusSent, false)
-	testdata.InsertOutgoingMsg(rt, testdata.Org2, testdata.Org2Channel, testdata.Org2Contact, "out 3", nil, models.MsgStatusSent, false)
-
-	msgs, err := models.SelectContactMessages(ctx, rt.DB, int(testdata.Cathy.ID), thisMoment)
-
-	// shoud only return messages for testdata.Cathy
-	assert.NoError(t, err)
-	assert.Equal(t, 3, len(msgs))
-}

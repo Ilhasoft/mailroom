@@ -595,28 +595,6 @@ WHERE
 ORDER BY
 	id ASC`
 
-// SelectContactMessages loads the given messages for the passed in contact, created after the passed in time
-func SelectContactMessages(ctx context.Context, db Queryer, contactID int, after time.Time) ([]*Msg, error) {
-	rows, err := db.QueryxContext(ctx, selectContactMessagesSQL, contactID, after)
-	if err != nil {
-		return nil, errors.Wrapf(err, "error querying msgs for contact: %d", contactID)
-	}
-	defer rows.Close()
-
-	msgs := make([]*Msg, 0)
-	for rows.Next() {
-		msg := &Msg{}
-		err = rows.StructScan(&msg.m)
-		if err != nil {
-			return nil, errors.Wrapf(err, "error scanning msg row")
-		}
-
-		msgs = append(msgs, msg)
-	}
-
-	return msgs, nil
-}
-
 // NormalizeAttachment will turn any relative URL in the passed in attachment and normalize it to
 // include the full host for attachment domains
 func NormalizeAttachment(cfg *runtime.Config, attachment utils.Attachment) utils.Attachment {

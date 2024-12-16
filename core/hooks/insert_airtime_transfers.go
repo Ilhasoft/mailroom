@@ -2,12 +2,12 @@ package hooks
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/pkg/errors"
 )
 
 // InsertAirtimeTransfersHook is our hook for inserting airtime transfers
@@ -30,7 +30,7 @@ func (h *insertAirtimeTransfersHook) Apply(ctx context.Context, rt *runtime.Runt
 	// insert the transfers
 	err := models.InsertAirtimeTransfers(ctx, tx, transfers)
 	if err != nil {
-		return errors.Wrapf(err, "error inserting airtime transfers")
+		return fmt.Errorf("error inserting airtime transfers: %w", err)
 	}
 
 	// gather all our logs and set the newly inserted transfer IDs on them
@@ -46,7 +46,7 @@ func (h *insertAirtimeTransfersHook) Apply(ctx context.Context, rt *runtime.Runt
 	// insert the logs
 	err = models.InsertHTTPLogs(ctx, tx, logs)
 	if err != nil {
-		return errors.Wrapf(err, "error inserting airtime transfer logs")
+		return fmt.Errorf("error inserting airtime transfer logs: %w", err)
 	}
 
 	return nil

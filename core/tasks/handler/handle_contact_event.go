@@ -2,22 +2,24 @@ package handler
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
+	"github.com/jmoiron/sqlx"
 	"github.com/nyaruka/gocommon/analytics"
 	"github.com/nyaruka/gocommon/dbutil"
 	"github.com/nyaruka/gocommon/jsonx"
 	"github.com/nyaruka/mailroom/core/models"
-	"github.com/nyaruka/mailroom/core/queue"
 	"github.com/nyaruka/mailroom/core/tasks"
+	"github.com/nyaruka/mailroom/core/tasks/ivr"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
+	"github.com/nyaruka/mailroom/utils/queues"
 )
 
-// TypeHandleContactEvent is the task type for flagging that a contact has tasks to be handled
+// TypeHandleContactEvent is the task type for flagging that a contact has handler tasks to be handled
 const TypeHandleContactEvent = "handle_contact_event"
 
 func init() {
@@ -38,35 +40,39 @@ func (t *HandleContactEventTask) Timeout() time.Duration {
 	return time.Minute * 5
 }
 
+func (t *HandleContactEventTask) WithAssets() models.Refresh {
+	return models.RefreshNone
+}
+
 // Perform is called when an event comes in for a contact. To make sure we don't get into a situation of being off by one,
 // this task ingests and handles all the events for a contact, one by one.
-func (t *HandleContactEventTask) Perform(ctx context.Context, rt *runtime.Runtime, orgID models.OrgID) error {
+func (t *HandleContactEventTask) Perform(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets) error {
 	// try to get the lock for this contact, waiting up to 10 seconds
-	locks, _, err := models.LockContacts(ctx, rt, orgID, []models.ContactID{t.ContactID}, time.Second*10)
+	locks, _, err := models.LockContacts(ctx, rt, oa.OrgID(), []models.ContactID{t.ContactID}, time.Second*10)
 	if err != nil {
-		return errors.Wrapf(err, "error acquiring lock for contact %d", t.ContactID)
+		return fmt.Errorf("error acquiring lock for contact %d: %w", t.ContactID, err)
 	}
 
 	// we didn't get the lock.. requeue for later
 	if len(locks) == 0 {
 		rc := rt.RP.Get()
 		defer rc.Close()
-		err = tasks.Queue(rc, queue.HandlerQueue, orgID, &HandleContactEventTask{ContactID: t.ContactID}, queue.DefaultPriority)
+		err = tasks.Queue(rc, tasks.HandlerQueue, oa.OrgID(), &HandleContactEventTask{ContactID: t.ContactID}, queues.DefaultPriority)
 		if err != nil {
-			return errors.Wrapf(err, "error re-adding contact task after failing to get lock")
+			return fmt.Errorf("error re-adding contact task after failing to get lock: %w", err)
 		}
-		slog.Info("failed to get lock for contact, requeued and skipping", "org_id", orgID, "contact_id", t.ContactID)
+		slog.Info("failed to get lock for contact, requeued and skipping", "org_id", oa.OrgID(), "contact_id", t.ContactID)
 		return nil
 	}
 
-	defer models.UnlockContacts(rt, orgID, locks)
+	defer models.UnlockContacts(rt, oa.OrgID(), locks)
 
 	// read all the events for this contact, one by one
-	contactQ := fmt.Sprintf("c:%d:%d", orgID, t.ContactID)
+	contactQ := fmt.Sprintf("c:%d:%d", oa.OrgID(), t.ContactID)
 	for {
 		// pop the next event off this contacts queue
 		rc := rt.RP.Get()
-		event, err := redis.String(rc.Do("lpop", contactQ))
+		event, err := redis.Bytes(rc.Do("LPOP", contactQ))
 		rc.Close()
 
 		// out of tasks? that's ok, exit
@@ -76,81 +82,114 @@ func (t *HandleContactEventTask) Perform(ctx context.Context, rt *runtime.Runtim
 
 		// real error? report
 		if err != nil {
-			return errors.Wrapf(err, "error popping contact event")
+			return fmt.Errorf("error popping handler task: %w", err)
+		}
+
+		// decode our event, this is a normal task at its top level
+		taskPayload := &payload{}
+		jsonx.MustUnmarshal([]byte(event), taskPayload)
+
+		ctask, err := readTask(taskPayload.Type, taskPayload.Task)
+		if err != nil {
+			return fmt.Errorf("error reading handler task: %w", err)
 		}
 
 		start := time.Now()
+		log := slog.With("org_id", oa.OrgID(), "contact_id", t.ContactID, "type", taskPayload.Type)
 
-		// decode our event, this is a normal task at its top level
-		contactEvent := &queue.Task{}
-		jsonx.MustUnmarshal([]byte(event), contactEvent)
-
-		// hand off to the appropriate handler
-		switch contactEvent.Type {
-
-		case string(models.EventTypeStopContact), "stop_event":
-			evt := &StopEvent{}
-			jsonx.MustUnmarshal(contactEvent.Task, evt)
-			err = handleStopEvent(ctx, rt, evt)
-
-		case string(models.EventTypeNewConversation), string(models.EventTypeReferral), string(models.EventTypeMissedCall), string(models.EventTypeWelcomeMessage), string(models.EventTypeOptIn), string(models.EventTypeOptOut):
-			evt := &models.ChannelEvent{}
-			jsonx.MustUnmarshal(contactEvent.Task, evt)
-			_, err = HandleChannelEvent(ctx, rt, models.ChannelEventType(contactEvent.Type), evt, nil)
-
-		case MsgEventType:
-			msg := &MsgEvent{}
-			jsonx.MustUnmarshal(contactEvent.Task, msg)
-			err = handleMsgEvent(ctx, rt, msg)
-
-		case TicketClosedEventType:
-			evt := &models.TicketEvent{}
-			jsonx.MustUnmarshal(contactEvent.Task, evt)
-			err = handleTicketEvent(ctx, rt, evt)
-
-		case TimeoutEventType, ExpirationEventType:
-			evt := &TimedEvent{}
-			jsonx.MustUnmarshal(contactEvent.Task, evt)
-			err = handleTimedEvent(ctx, rt, contactEvent.Type, evt)
-
-		case MsgDeletedType:
-			evt := &MsgDeletedEvent{}
-			jsonx.MustUnmarshal(contactEvent.Task, evt)
-			err = handleMsgDeletedEvent(ctx, rt, evt)
-
-		default:
-			return errors.Errorf("unknown contact event type: %s", contactEvent.Type)
-		}
+		err = performHandlerTask(ctx, rt, oa, t.ContactID, ctask)
 
 		// log our processing time to librato
-		analytics.Gauge(fmt.Sprintf("mr.%s_elapsed", contactEvent.Type), float64(time.Since(start))/float64(time.Second))
+		analytics.Gauge(fmt.Sprintf("mr.%s_elapsed", taskPayload.Type), float64(time.Since(start))/float64(time.Second))
 
 		// and total latency for this task since it was queued
-		analytics.Gauge(fmt.Sprintf("mr.%s_latency", contactEvent.Type), float64(time.Since(contactEvent.QueuedOn))/float64(time.Second))
+		analytics.Gauge(fmt.Sprintf("mr.%s_latency", taskPayload.Type), float64(time.Since(taskPayload.QueuedOn))/float64(time.Second))
 
 		// if we get an error processing an event, requeue it for later and return our error
 		if err != nil {
-			log := slog.With("org_id", orgID, "contact_id", t.ContactID, "event", event)
-
 			if qerr := dbutil.AsQueryError(err); qerr != nil {
 				query, params := qerr.Query()
 				log = log.With("sql", query, "sql_params", params)
 			}
 
-			contactEvent.ErrorCount++
-			if contactEvent.ErrorCount < 3 {
+			taskPayload.ErrorCount++
+			if taskPayload.ErrorCount < 3 {
 				rc := rt.RP.Get()
-				retryErr := queueHandleTask(rc, t.ContactID, contactEvent, true)
+				retryErr := queueTask(rc, oa.OrgID(), t.ContactID, ctask, true, taskPayload.ErrorCount)
 				if retryErr != nil {
-					slog.Error("error requeuing errored contact event", "error", retryErr)
+					log.Error("error requeuing errored contact event", "error", retryErr)
 				}
 				rc.Close()
 
-				log.Error("error handling contact event", "error", err, "error_count", contactEvent.ErrorCount)
+				log.Error("error handling contact event", "error", err, "error_count", taskPayload.ErrorCount)
 				return nil
 			}
 			log.Error("error handling contact event, permanent failure", "error", err)
 			return nil
 		}
+
+		log.Debug("handler task completed", "elapsed", time.Since(start))
 	}
+}
+
+func performHandlerTask(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, contactID models.ContactID, task Task) error {
+	var db models.Queryer = rt.DB
+	if task.UseReadOnly() {
+		db = rt.ReadonlyDB
+	}
+
+	contact, err := models.LoadContact(ctx, db, oa, contactID)
+	if err != nil {
+		if err == sql.ErrNoRows { // if contact no longer exists, ignore event, whatever it was gonna do is about to be deleted too
+			return nil
+		}
+		return fmt.Errorf("error loading contact: %w", err)
+	}
+
+	return task.Perform(ctx, rt, oa, contact)
+}
+
+type DBHook func(ctx context.Context, tx *sqlx.Tx) error
+
+// TriggerIVRFlow will create a new flow start with the passed in flow and set of contacts. This will cause us to
+// request calls to start, which once we get the callback will trigger our actual flow to start.
+func TriggerIVRFlow(ctx context.Context, rt *runtime.Runtime, orgID models.OrgID, flowID models.FlowID, contactIDs []models.ContactID, hook DBHook) error {
+	tx, _ := rt.DB.BeginTxx(ctx, nil)
+
+	// create and insert our flow start
+	start := models.NewFlowStart(orgID, models.StartTypeTrigger, flowID).WithContactIDs(contactIDs)
+	err := models.InsertFlowStarts(ctx, tx, []*models.FlowStart{start})
+	if err != nil {
+		tx.Rollback()
+		return fmt.Errorf("error inserting ivr flow start: %w", err)
+	}
+
+	// call our hook if we have one
+	if hook != nil {
+		err = hook(ctx, tx)
+		if err != nil {
+			tx.Rollback()
+			return fmt.Errorf("error while calling db hook: %w", err)
+		}
+	}
+
+	// commit our transaction
+	err = tx.Commit()
+	if err != nil {
+		tx.Rollback()
+		return fmt.Errorf("error committing transaction for ivr flow starts: %w", err)
+	}
+
+	// create our batch of all our contacts
+	task := &ivr.StartIVRFlowBatchTask{FlowStartBatch: start.CreateBatch(contactIDs, models.FlowTypeVoice, true, len(contactIDs))}
+
+	// queue this to our ivr starter, it will take care of creating the calls then calling back in
+	rc := rt.RP.Get()
+	defer rc.Close()
+	err = tasks.Queue(rc, tasks.BatchQueue, orgID, task, queues.HighPriority)
+	if err != nil {
+		return fmt.Errorf("error queuing ivr flow start: %w", err)
+	}
+
+	return nil
 }

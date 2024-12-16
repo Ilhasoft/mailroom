@@ -3,6 +3,7 @@ package flow
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/nyaruka/goflow/flows"
@@ -10,7 +11,6 @@ import (
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/mailroom/web"
-	"github.com/pkg/errors"
 )
 
 func init() {
@@ -33,7 +33,7 @@ type inspectRequest struct {
 func handleInspect(ctx context.Context, rt *runtime.Runtime, r *inspectRequest) (any, int, error) {
 	flow, err := goflow.ReadFlow(rt.Config, r.Flow)
 	if err != nil {
-		return errors.Wrapf(err, "unable to read flow"), http.StatusUnprocessableEntity, nil
+		return nil, 0, fmt.Errorf("unable to read flow: %w", err)
 	}
 
 	var sa flows.SessionAssets

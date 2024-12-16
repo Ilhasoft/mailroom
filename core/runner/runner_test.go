@@ -25,8 +25,11 @@ import (
 
 func TestStartFlowBatch(t *testing.T) {
 	ctx, rt := testsuite.Runtime()
+	rt.Config.AndroidCredentialsFile = `testdata/android.json`
 
 	defer testsuite.Reset(testsuite.ResetAll)
+
+	oa := testdata.Org1.Load(rt)
 
 	// create a start object
 	start1 := models.NewFlowStart(models.OrgID(1), models.StartTypeManual, testdata.SingleMessage.ID).
@@ -38,7 +41,7 @@ func TestStartFlowBatch(t *testing.T) {
 	batch2 := start1.CreateBatch([]models.ContactID{testdata.George.ID, testdata.Alexandria.ID}, models.FlowTypeBackground, true, 4)
 
 	// start the first batch...
-	sessions, err := runner.StartFlowBatch(ctx, rt, batch1)
+	sessions, err := runner.StartFlowBatch(ctx, rt, oa, batch1)
 	require.NoError(t, err)
 	assert.Len(t, sessions, 2)
 
@@ -51,13 +54,13 @@ func TestStartFlowBatch(t *testing.T) {
 		Returns(2)
 
 	assertdb.Query(t, rt.DB, `SELECT count(*) FROM msgs_msg WHERE contact_id = ANY($1) AND text = 'Hey, how are you?' AND org_id = 1 AND status = 'Q' 
-		AND queued_on IS NOT NULL AND direction = 'O' AND msg_type = 'T'`, pq.Array([]models.ContactID{testdata.Cathy.ID, testdata.Bob.ID})).
+		AND direction = 'O' AND msg_type = 'T'`, pq.Array([]models.ContactID{testdata.Cathy.ID, testdata.Bob.ID})).
 		Returns(2)
 
 	assertdb.Query(t, rt.DB, `SELECT status FROM flows_flowstart WHERE id = $1`, start1.ID).Returns("P")
 
 	// start the second batch...
-	sessions, err = runner.StartFlowBatch(ctx, rt, batch2)
+	sessions, err = runner.StartFlowBatch(ctx, rt, oa, batch2)
 	require.NoError(t, err)
 	assert.Len(t, sessions, 2)
 
@@ -70,7 +73,7 @@ func TestStartFlowBatch(t *testing.T) {
 		WithParams([]byte(`{"name":"Fred", "age":33}`))
 	batch3 := start2.CreateBatch([]models.ContactID{testdata.Cathy.ID}, models.FlowTypeMessaging, true, 1)
 
-	sessions, err = runner.StartFlowBatch(ctx, rt, batch3)
+	sessions, err = runner.StartFlowBatch(ctx, rt, oa, batch3)
 	require.NoError(t, err)
 	assert.Len(t, sessions, 1)
 

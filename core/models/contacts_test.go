@@ -148,21 +148,36 @@ func TestCreateContact(t *testing.T) {
 	oa, err := models.GetOrgAssets(ctx, rt, testdata.Org1.ID)
 	require.NoError(t, err)
 
-	contact, flowContact, err := models.CreateContact(ctx, rt.DB, oa, models.UserID(1), "Rich", `kin`, []urns.URN{urns.URN("telegram:200001"), urns.URN("telegram:200002")})
-	require.NoError(t, err)
+	contact, flowContact, err := models.CreateContact(ctx, rt.DB, oa, models.UserID(1), "Rich", `kin`, models.ContactStatusActive, []urns.URN{urns.URN("telegram:200001"), urns.URN("telegram:200002")})
+	assert.NoError(t, err)
 
 	assert.Equal(t, "Rich", contact.Name())
 	assert.Equal(t, i18n.Language(`kin`), contact.Language())
+	assert.Equal(t, models.ContactStatusActive, contact.Status())
 	assert.Equal(t, []urns.URN{"telegram:200001?id=30001", "telegram:200002?id=30000"}, contact.URNs())
 
 	assert.Equal(t, "Rich", flowContact.Name())
 	assert.Equal(t, i18n.Language(`kin`), flowContact.Language())
+	assert.Equal(t, flows.ContactStatusActive, flowContact.Status())
 	assert.Equal(t, []urns.URN{"telegram:200001?id=30001", "telegram:200002?id=30000"}, flowContact.URNs().RawURNs())
 	assert.Len(t, flowContact.Groups().All(), 1)
 	assert.Equal(t, assets.GroupUUID("d636c966-79c1-4417-9f1c-82ad629773a2"), flowContact.Groups().All()[0].UUID())
 
-	_, _, err = models.CreateContact(ctx, rt.DB, oa, models.UserID(1), "Rich", `kin`, []urns.URN{urns.URN("telegram:200001")})
-	assert.EqualError(t, err, "URNs in use by other contacts")
+	_, _, err = models.CreateContact(ctx, rt.DB, oa, models.UserID(1), "Rich", `kin`, models.ContactStatusActive, []urns.URN{urns.URN("telegram:200001")})
+	assert.EqualError(t, err, "URN 0 in use by other contacts")
+
+	var uerr *models.URNError
+	if assert.ErrorAs(t, err, &uerr) {
+		assert.Equal(t, "taken", uerr.Code)
+		assert.Equal(t, 0, uerr.Index)
+	}
+
+	// new blocked contact won't be added to smart groups
+	contact, flowContact, err = models.CreateContact(ctx, rt.DB, oa, models.UserID(1), "Bob", `kin`, models.ContactStatusBlocked, []urns.URN{urns.URN("telegram:200003")})
+	assert.NoError(t, err)
+	assert.Equal(t, models.ContactStatusBlocked, contact.Status())
+	assert.Equal(t, flows.ContactStatusBlocked, flowContact.Status())
+	assert.Len(t, flowContact.Groups().All(), 0)
 }
 
 func TestCreateContactRace(t *testing.T) {
@@ -186,7 +201,7 @@ func TestCreateContactRace(t *testing.T) {
 	var errs [2]error
 
 	test.RunConcurrently(2, func(i int) {
-		contacts[i], _, errs[i] = models.CreateContact(ctx, mdb, oa, models.UserID(1), "", i18n.NilLanguage, []urns.URN{urns.URN("telegram:100007")})
+		contacts[i], _, errs[i] = models.CreateContact(ctx, mdb, oa, models.UserID(1), "", i18n.NilLanguage, models.ContactStatusActive, []urns.URN{urns.URN("telegram:100007")})
 	})
 
 	// one should return a contact, the other should error
@@ -451,20 +466,24 @@ func TestGetContactIDsFromReferences(t *testing.T) {
 	assert.ElementsMatch(t, []models.ContactID{testdata.Cathy.ID, testdata.Bob.ID}, ids)
 }
 
-func TestStopContact(t *testing.T) {
+func TestContactStop(t *testing.T) {
 	ctx, rt := testsuite.Runtime()
 
 	defer testsuite.Reset(testsuite.ResetAll)
 
-	// stop kathy
-	err := models.StopContact(ctx, rt.DB, testdata.Org1.ID, testdata.Cathy.ID)
+	oa := testdata.Org1.Load(rt)
+	contact, _, _ := testdata.Cathy.Load(rt, oa)
+
+	err := contact.Stop(ctx, rt.DB, oa)
 	assert.NoError(t, err)
+	assert.Equal(t, models.ContactStatusStopped, contact.Status())
+	if assert.Len(t, contact.Groups(), 1) {
+		assert.Equal(t, "Stopped", contact.Groups()[0].Name())
+	}
 
-	// verify she's only in the stopped group
+	// verify that matches the database state
+	assertdb.Query(t, rt.DB, `SELECT status FROM contacts_contact WHERE id = $1`, testdata.Cathy.ID).Returns("S")
 	assertdb.Query(t, rt.DB, `SELECT count(*) FROM contacts_contactgroup_contacts WHERE contact_id = $1`, testdata.Cathy.ID).Returns(1)
-
-	// verify she's stopped
-	assertdb.Query(t, rt.DB, `SELECT count(*) FROM contacts_contact WHERE id = $1 AND status = 'S' AND is_active = TRUE`, testdata.Cathy.ID).Returns(1)
 }
 
 func TestUpdateContactLastSeenAndModifiedOn(t *testing.T) {
@@ -624,13 +643,15 @@ func TestLoadContactURNs(t *testing.T) {
 
 func TestLockContacts(t *testing.T) {
 	ctx, rt := testsuite.Runtime()
+	rc := rt.RP.Get()
+	defer rc.Close()
 
 	defer testsuite.Reset(testsuite.ResetRedis)
 
 	// grab lock for contact 102
 	models.LockContacts(ctx, rt, testdata.Org1.ID, []models.ContactID{102}, time.Second)
 
-	assertredis.Exists(t, rt.RP, "lock:c:1:102")
+	assertredis.Exists(t, rc, "lock:c:1:102")
 
 	// try to get locks for 101, 102, 103
 	locks, skipped, err := models.LockContacts(ctx, rt, testdata.Org1.ID, []models.ContactID{101, 102, 103}, time.Second)
@@ -638,16 +659,16 @@ func TestLockContacts(t *testing.T) {
 	assert.ElementsMatch(t, []models.ContactID{101, 103}, maps.Keys(locks))
 	assert.Equal(t, []models.ContactID{102}, skipped) // because it's already locked
 
-	assertredis.Exists(t, rt.RP, "lock:c:1:101")
-	assertredis.Exists(t, rt.RP, "lock:c:1:102")
-	assertredis.Exists(t, rt.RP, "lock:c:1:103")
+	assertredis.Exists(t, rc, "lock:c:1:101")
+	assertredis.Exists(t, rc, "lock:c:1:102")
+	assertredis.Exists(t, rc, "lock:c:1:103")
 
 	err = models.UnlockContacts(rt, testdata.Org1.ID, locks)
 	assert.NoError(t, err)
 
-	assertredis.NotExists(t, rt.RP, "lock:c:1:101")
-	assertredis.Exists(t, rt.RP, "lock:c:1:102")
-	assertredis.NotExists(t, rt.RP, "lock:c:1:103")
+	assertredis.NotExists(t, rc, "lock:c:1:101")
+	assertredis.Exists(t, rc, "lock:c:1:102")
+	assertredis.NotExists(t, rc, "lock:c:1:103")
 
 	// lock contacts 103, 104, 105 so only 101 is unlocked
 	models.LockContacts(ctx, rt, testdata.Org1.ID, []models.ContactID{103}, time.Second)
@@ -665,5 +686,5 @@ func TestLockContacts(t *testing.T) {
 	assert.Less(t, time.Since(start), time.Second*3)
 
 	// since we errored, any locks we grabbed before the error, should have been released
-	assertredis.NotExists(t, rt.RP, "lock:c:1:101")
+	assertredis.NotExists(t, rc, "lock:c:1:101")
 }

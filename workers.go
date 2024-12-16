@@ -7,27 +7,27 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nyaruka/mailroom/core/queue"
+	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
+	"github.com/nyaruka/mailroom/utils/queues"
 )
 
 // Foreman takes care of managing our set of workers and assigns msgs for each to send
 type Foreman struct {
 	rt               *runtime.Runtime
 	wg               *sync.WaitGroup
-	queue            string
+	queue            *queues.FairSorted
 	workers          []*Worker
 	availableWorkers chan *Worker
 	quit             chan bool
 }
 
 // NewForeman creates a new Foreman for the passed in server with the number of max workers
-func NewForeman(rt *runtime.Runtime, wg *sync.WaitGroup, queue string, maxWorkers int) *Foreman {
+func NewForeman(rt *runtime.Runtime, wg *sync.WaitGroup, q *queues.FairSorted, maxWorkers int) *Foreman {
 	foreman := &Foreman{
 		rt:               rt,
 		wg:               wg,
-		queue:            queue,
+		queue:            q,
 		workers:          make([]*Worker, maxWorkers),
 		availableWorkers: make(chan *Worker, maxWorkers),
 		quit:             make(chan bool),
@@ -80,7 +80,7 @@ func (f *Foreman) Assign() {
 		case worker := <-f.availableWorkers:
 			// see if we have a task to work on
 			rc := f.rt.RP.Get()
-			task, err := queue.PopNextTask(rc, f.queue)
+			task, err := f.queue.Pop(rc)
 			rc.Close()
 
 			if err == nil && task != nil {
@@ -109,7 +109,7 @@ func (f *Foreman) Assign() {
 type Worker struct {
 	id      int
 	foreman *Foreman
-	job     chan *queue.Task
+	job     chan *queues.Task
 }
 
 // NewWorker creates a new worker responsible for working on events
@@ -117,7 +117,7 @@ func NewWorker(foreman *Foreman, id int) *Worker {
 	worker := &Worker{
 		id:      id,
 		foreman: foreman,
-		job:     make(chan *queue.Task, 1),
+		job:     make(chan *queues.Task, 1),
 	}
 	return worker
 }
@@ -155,8 +155,8 @@ func (w *Worker) Stop() {
 	close(w.job)
 }
 
-func (w *Worker) handleTask(task *queue.Task) {
-	log := slog.With("queue", w.foreman.queue, "worker_id", w.id, "task_type", task.Type, "org_id", task.OrgID)
+func (w *Worker) handleTask(task *queues.Task) {
+	log := slog.With("queue", w.foreman.queue, "worker_id", w.id, "task_type", task.Type, "org_id", task.OwnerID)
 
 	defer func() {
 		// catch any panics and recover
@@ -168,7 +168,7 @@ func (w *Worker) handleTask(task *queue.Task) {
 
 		// mark our task as complete
 		rc := w.foreman.rt.RP.Get()
-		err := queue.MarkTaskComplete(rc, w.foreman.queue, task.OrgID)
+		err := w.foreman.queue.Done(rc, task.OwnerID)
 		if err != nil {
 			log.Error("unable to mark task as complete", "error", err)
 		}
@@ -178,7 +178,7 @@ func (w *Worker) handleTask(task *queue.Task) {
 	log.Debug("starting handling of task")
 	start := time.Now()
 
-	if err := PerformTask(w.foreman.rt, task); err != nil {
+	if err := tasks.Perform(context.Background(), w.foreman.rt, task); err != nil {
 		log.Error("error running task", "task", string(task.Task), "error", err)
 	}
 
@@ -189,13 +189,4 @@ func (w *Worker) handleTask(task *queue.Task) {
 	if elapsed > time.Minute {
 		log.Warn("long running task", "task", string(task.Task), "elapsed", elapsed)
 	}
-}
-
-func PerformTask(rt *runtime.Runtime, t *queue.Task) error {
-	taskFunc, found := taskFunctions[t.Type]
-	if !found {
-		return errors.Errorf("unable to find handler for task type %s", t.Type)
-	}
-
-	return taskFunc(context.Background(), rt, t)
 }

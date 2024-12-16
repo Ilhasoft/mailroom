@@ -2,12 +2,12 @@ package hooks
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/pkg/errors"
 )
 
 // ContactModifiedHook is our hook for contact changes that require an update to modified_on
@@ -26,7 +26,7 @@ func (h *contactModifiedHook) Apply(ctx context.Context, rt *runtime.Runtime, tx
 
 	err := models.UpdateContactModifiedOn(ctx, tx, contactIDs)
 	if err != nil {
-		return errors.Wrapf(err, "error updating modified_on on contacts")
+		return fmt.Errorf("error updating modified_on on contacts: %w", err)
 	}
 
 	return nil

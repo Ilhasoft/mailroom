@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -25,7 +26,6 @@ import (
 	"github.com/nyaruka/mailroom/core/goflow"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/null/v3"
-	"github.com/pkg/errors"
 )
 
 // Register a airtime service factory with the engine
@@ -34,15 +34,18 @@ func init() {
 	goflow.RegisterAirtimeServiceFactory(airtimeServiceFactory)
 }
 
-func emailServiceFactory(c *runtime.Config) engine.EmailServiceFactory {
+func emailServiceFactory(rt *runtime.Runtime) engine.EmailServiceFactory {
 	var emailRetries = smtpx.NewFixedRetries(time.Second*3, time.Second*6)
 
 	return func(sa flows.SessionAssets) (flows.EmailService, error) {
-		return orgFromAssets(sa).EmailService(c, emailRetries)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+		defer cancel()
+
+		return orgFromAssets(sa).EmailService(ctx, rt, emailRetries)
 	}
 }
 
-func airtimeServiceFactory(c *runtime.Config) engine.AirtimeServiceFactory {
+func airtimeServiceFactory(rt *runtime.Runtime) engine.AirtimeServiceFactory {
 	// give airtime transfers an extra long timeout
 	airtimeHTTPClient := &http.Client{Timeout: time.Duration(120 * time.Second)}
 	airtimeHTTPRetries := httpx.NewFixedRetries(time.Second*5, time.Second*10)
@@ -59,7 +62,6 @@ const (
 	// NilOrgID is the id 0 considered as nil org id
 	NilOrgID = OrgID(0)
 
-	configSMTPServer  = "smtp_server"
 	configDTOneKey    = "dtone_key"
 	configDTOneSecret = "dtone_secret"
 )
@@ -68,7 +70,9 @@ const (
 type Org struct {
 	o struct {
 		ID        OrgID         `json:"id"`
+		ParentID  OrgID         `json:"parent_id"`
 		Suspended bool          `json:"is_suspended"`
+		FlowSMTP  null.String   `json:"flow_smtp"`
 		Config    null.Map[any] `json:"config"`
 	}
 	env envs.Environment
@@ -79,6 +83,9 @@ func (o *Org) ID() OrgID { return o.o.ID }
 
 // Suspended returns whether the org has been suspended
 func (o *Org) Suspended() bool { return o.o.Suspended }
+
+// FlowSMTP provides custom SMTP settings for flow sessions
+func (o *Org) FlowSMTP() string { return string(o.o.FlowSMTP) }
 
 // Environment returns this org as an engine environment
 func (o *Org) Environment() envs.Environment { return o.env }
@@ -112,13 +119,29 @@ func (o *Org) ConfigValue(key string, def string) string {
 }
 
 // EmailService returns the email service for this org
-func (o *Org) EmailService(c *runtime.Config, retries *smtpx.RetryConfig) (flows.EmailService, error) {
-	connectionURL := o.ConfigValue(configSMTPServer, c.SMTPServer)
+func (o *Org) EmailService(ctx context.Context, rt *runtime.Runtime, retries *smtpx.RetryConfig) (flows.EmailService, error) {
+	// first look for custom SMTP on this org
+	smtpURL := o.FlowSMTP()
 
-	if connectionURL == "" {
+	// secondly look on parent org if there is one
+	if smtpURL == "" && o.o.ParentID != NilOrgID {
+		parent, err := GetOrgAssets(ctx, rt, o.o.ParentID)
+		if err != nil {
+			return nil, fmt.Errorf("error loading parent org: %w", err)
+		}
+		smtpURL = parent.Org().FlowSMTP()
+	}
+
+	// finally use config default
+	if smtpURL == "" {
+		smtpURL = rt.Config.SMTPServer
+	}
+
+	if smtpURL == "" {
 		return nil, errors.New("missing SMTP configuration")
 	}
-	return smtp.NewService(connectionURL, retries)
+
+	return smtp.NewService(smtpURL, retries)
 }
 
 // AirtimeService returns the airtime service for this org if one is configured
@@ -127,7 +150,7 @@ func (o *Org) AirtimeService(httpClient *http.Client, httpRetries *httpx.RetryCo
 	secret := o.ConfigValue(configDTOneSecret, "")
 
 	if key == "" || secret == "" {
-		return nil, errors.Errorf("missing %s or %s on DTOne configuration for org: %d", configDTOneKey, configDTOneSecret, o.ID())
+		return nil, fmt.Errorf("missing %s or %s on DTOne configuration for org: %d", configDTOneKey, configDTOneSecret, o.ID())
 	}
 	return dtone.NewService(httpClient, httpRetries, key, secret), nil
 }
@@ -139,7 +162,7 @@ func (o *Org) StoreAttachment(ctx context.Context, rt *runtime.Runtime, filename
 	// read the content
 	contentBytes, err := io.ReadAll(content)
 	if err != nil {
-		return "", errors.Wrapf(err, "unable to read attachment content")
+		return "", fmt.Errorf("unable to read attachment content: %w", err)
 	}
 	content.Close()
 
@@ -152,7 +175,7 @@ func (o *Org) StoreAttachment(ctx context.Context, rt *runtime.Runtime, filename
 
 	url, err := rt.AttachmentStorage.Put(ctx, path, contentType, contentBytes)
 	if err != nil {
-		return "", errors.Wrapf(err, "unable to store attachment content")
+		return "", fmt.Errorf("unable to store attachment content: %w", err)
 	}
 
 	return utils.Attachment(contentType + ":" + url), nil
@@ -187,16 +210,16 @@ func LoadOrg(ctx context.Context, cfg *runtime.Config, db *sql.DB, orgID OrgID) 
 	org := &Org{}
 	rows, err := db.QueryContext(ctx, selectOrgByID, orgID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error loading org: %d", orgID)
+		return nil, fmt.Errorf("error loading org: %d: %w", orgID, err)
 	}
 	defer rows.Close()
 	if !rows.Next() {
-		return nil, errors.Errorf("no org with id: %d", orgID)
+		return nil, fmt.Errorf("no org with id: %d", orgID)
 	}
 
 	err = dbutil.ScanJSON(rows, org)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error unmarshalling org")
+		return nil, fmt.Errorf("error unmarshalling org: %w", err)
 	}
 
 	slog.Debug("loaded org environment", "elapsed", time.Since(start), "org_id", orgID)
@@ -207,7 +230,9 @@ func LoadOrg(ctx context.Context, cfg *runtime.Config, db *sql.DB, orgID OrgID) 
 const selectOrgByID = `
 SELECT ROW_TO_JSON(o) FROM (SELECT
 	id,
+	parent_id,
 	is_suspended,
+	flow_smtp,
 	o.config AS config,
 	(SELECT CASE date_format WHEN 'D' THEN 'DD-MM-YYYY' WHEN 'M' THEN 'MM-DD-YYYY' ELSE 'YYYY-MM-DD' END) AS date_format, 
 	'tt:mm' AS time_format,

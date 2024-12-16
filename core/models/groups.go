@@ -3,13 +3,12 @@ package models
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/lib/pq"
 	"github.com/nyaruka/gocommon/dbutil"
 	"github.com/nyaruka/goflow/assets"
 	"github.com/nyaruka/goflow/flows"
-	"github.com/pkg/errors"
 )
 
 // GroupID is our type for group ids
@@ -28,8 +27,9 @@ const (
 type GroupType string
 
 const (
-	GroupTypeManual = GroupType("M")
-	GroupTypeSmart  = GroupType("Q")
+	GroupTypeManual    = GroupType("M")
+	GroupTypeSmart     = GroupType("Q")
+	GroupTypeDBStopped = GroupType("S")
 )
 
 // Group is our mailroom type for contact groups
@@ -64,7 +64,7 @@ func (g *Group) Type() GroupType { return g.Type_ }
 func loadGroups(ctx context.Context, db *sql.DB, orgID OrgID) ([]assets.Group, error) {
 	rows, err := db.QueryContext(ctx, sqlSelectGroupsByOrg, orgID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error querying groups for org: %d", orgID)
+		return nil, fmt.Errorf("error querying groups for org: %d: %w", orgID, err)
 	}
 
 	return ScanJSONRows(rows, func() assets.Group { return &Group{} })
@@ -121,19 +121,28 @@ INSERT INTO contacts_contactgroup_contacts(contact_id, contactgroup_id)
                                     VALUES(:contact_id, :group_id)
 ON CONFLICT DO NOTHING`
 
-// ContactIDsForGroupIDs returns the unique contacts that are in the passed in groups
-func ContactIDsForGroupIDs(ctx context.Context, tx DBorTx, groupIDs []GroupID) ([]ContactID, error) {
-	// now add all the ids for our groups
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT(contact_id) FROM contacts_contactgroup_contacts WHERE contactgroup_id = ANY($1)`, pq.Array(groupIDs))
+// GetGroupContactCount returns the total number of contacts that are in given group
+func GetGroupContactCount(ctx context.Context, db *sql.DB, groupID GroupID) (int, error) {
+	var count int
+	err := db.QueryRowContext(ctx, `SELECT SUM(count) FROM contacts_contactgroupcount WHERE group_id = $1 GROUP BY group_id`, groupID).Scan(&count)
+	if err != nil && err != sql.ErrNoRows {
+		return 0, fmt.Errorf("error getting group contact count: %w", err)
+	}
+	return count, nil
+}
+
+// GetGroupContactIDs returns the ids of the contacts that are in given group
+func GetGroupContactIDs(ctx context.Context, tx DBorTx, groupID GroupID) ([]ContactID, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT contact_id FROM contacts_contactgroup_contacts WHERE contactgroup_id = $1`, groupID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error selecting contacts for groups")
+		return nil, fmt.Errorf("error selecting contact ids for group: %w", err)
 	}
 
 	contactIDs := make([]ContactID, 0, 10)
 
 	contactIDs, err = dbutil.ScanAllSlice(rows, contactIDs)
 	if err != nil {
-		return nil, errors.Wrap(err, "error scanning contact ids")
+		return nil, fmt.Errorf("error scanning contact ids: %w", err)
 	}
 	return contactIDs, nil
 }
@@ -144,7 +153,7 @@ const updateGroupStatusSQL = `UPDATE contacts_contactgroup SET status = $2 WHERE
 func UpdateGroupStatus(ctx context.Context, db DBorTx, groupID GroupID, status GroupStatus) error {
 	_, err := db.ExecContext(ctx, updateGroupStatusSQL, groupID, status)
 	if err != nil {
-		return errors.Wrapf(err, "error updating group status for group: %d", groupID)
+		return fmt.Errorf("error updating group status for group: %d: %w", groupID, err)
 	}
 	return nil
 }
@@ -157,7 +166,7 @@ func RemoveContactsFromGroupAndCampaigns(ctx context.Context, db *sqlx.DB, oa *O
 
 		if err != nil {
 			tx.Rollback()
-			return errors.Wrapf(err, "error starting transaction")
+			return fmt.Errorf("error starting transaction: %w", err)
 		}
 
 		removals := make([]*GroupRemove, len(batch))
@@ -170,19 +179,19 @@ func RemoveContactsFromGroupAndCampaigns(ctx context.Context, db *sqlx.DB, oa *O
 		err = RemoveContactsFromGroups(ctx, tx, removals)
 		if err != nil {
 			tx.Rollback()
-			return errors.Wrapf(err, "error removing contacts from group: %d", groupID)
+			return fmt.Errorf("error removing contacts from group: %d: %w", groupID, err)
 		}
 
 		// remove from any campaign events
 		err = DeleteUnfiredEventsForGroupRemoval(ctx, tx, oa, batch, groupID)
 		if err != nil {
 			tx.Rollback()
-			return errors.Wrapf(err, "error removing contacts from unfired campaign events for group: %d", groupID)
+			return fmt.Errorf("error removing contacts from unfired campaign events for group: %d: %w", groupID, err)
 		}
 
 		err = tx.Commit()
 		if err != nil {
-			return errors.Wrapf(err, "error commiting batch removal of contacts for group: %d", groupID)
+			return fmt.Errorf("error commiting batch removal of contacts for group: %d: %w", groupID, err)
 		}
 
 		return nil
@@ -220,7 +229,7 @@ func AddContactsToGroupAndCampaigns(ctx context.Context, db *sqlx.DB, oa *OrgAss
 
 		if err != nil {
 			tx.Rollback()
-			return errors.Wrapf(err, "error starting transaction")
+			return fmt.Errorf("error starting transaction: %w", err)
 		}
 
 		adds := make([]*GroupAdd, len(batch))
@@ -233,14 +242,14 @@ func AddContactsToGroupAndCampaigns(ctx context.Context, db *sqlx.DB, oa *OrgAss
 		err = AddContactsToGroups(ctx, tx, adds)
 		if err != nil {
 			tx.Rollback()
-			return errors.Wrapf(err, "error adding contacts to group: %d", groupID)
+			return fmt.Errorf("error adding contacts to group: %d: %w", groupID, err)
 		}
 
 		// now load our contacts and add update their campaign events
 		contacts, err := LoadContacts(ctx, tx, oa, batch)
 		if err != nil {
 			tx.Rollback()
-			return errors.Wrapf(err, "error loading contacts when adding to group: %d", groupID)
+			return fmt.Errorf("error loading contacts when adding to group: %d: %w", groupID, err)
 		}
 
 		// convert to flow contacts
@@ -249,7 +258,7 @@ func AddContactsToGroupAndCampaigns(ctx context.Context, db *sqlx.DB, oa *OrgAss
 			fcs[i], err = c.FlowContact(oa)
 			if err != nil {
 				tx.Rollback()
-				return errors.Wrapf(err, "error converting contact to flow contact: %s", c.UUID())
+				return fmt.Errorf("error converting contact to flow contact: %s: %w", c.UUID(), err)
 			}
 		}
 
@@ -257,12 +266,12 @@ func AddContactsToGroupAndCampaigns(ctx context.Context, db *sqlx.DB, oa *OrgAss
 		err = AddCampaignEventsForGroupAddition(ctx, tx, oa, fcs, groupID)
 		if err != nil {
 			tx.Rollback()
-			return errors.Wrapf(err, "error calculating new campaign events during group addition: %d", groupID)
+			return fmt.Errorf("error calculating new campaign events during group addition: %d: %w", groupID, err)
 		}
 
 		err = tx.Commit()
 		if err != nil {
-			return errors.Wrapf(err, "error commiting batch addition of contacts for group: %d", groupID)
+			return fmt.Errorf("error commiting batch addition of contacts for group: %d: %w", groupID, err)
 		}
 
 		return nil

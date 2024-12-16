@@ -258,7 +258,7 @@ func TestServer(t *testing.T) {
 			body = bytes.NewReader([]byte(bodyStr))
 		}
 
-		req, err := http.NewRequest(tc.Method, "http://localhost:8090"+tc.URL, body)
+		req, err := http.NewRequest(tc.Method, "http://localhost:8091"+tc.URL, body)
 		assert.NoError(t, err, "%d: error creating request", i)
 
 		resp, err := http.DefaultClient.Do(req)

@@ -4,8 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nyaruka/gocommon/urns"
-	"github.com/nyaruka/gocommon/uuids"
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/goflow/flows/actions"
 	"github.com/nyaruka/mailroom/core/handlers"
@@ -43,24 +41,6 @@ func TestMsgReceived(t *testing.T) {
 				{
 					SQL:   "SELECT COUNT(*) FROM contacts_contact WHERE id = $1 AND last_seen_on IS NULL",
 					Args:  []any{testdata.George.ID},
-					Count: 1,
-				},
-			},
-		},
-		{
-			FlowType: flows.FlowTypeMessagingOffline,
-			Actions: handlers.ContactActionMap{
-				testdata.Bob: []flows.Action{
-					actions.NewSendMsg(handlers.NewActionUUID(), "Hello World", nil, nil, false),
-				},
-			},
-			Msgs: handlers.ContactMsgMap{
-				testdata.Bob: flows.NewMsgIn(flows.MsgUUID(uuids.New()), urns.NilURN, nil, "Hi offline", nil),
-			},
-			SQLAssertions: []handlers.SQLAssertion{
-				{
-					SQL:   "SELECT COUNT(*) FROM msgs_msg WHERE contact_id = $1 AND direction = 'I'",
-					Args:  []any{testdata.Bob.ID},
 					Count: 1,
 				},
 			},

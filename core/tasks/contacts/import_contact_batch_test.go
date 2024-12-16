@@ -9,12 +9,10 @@ import (
 	"github.com/nyaruka/mailroom/core/tasks/contacts"
 	"github.com/nyaruka/mailroom/testsuite"
 	"github.com/nyaruka/mailroom/testsuite/testdata"
-
-	"github.com/stretchr/testify/require"
 )
 
 func TestImportContactBatch(t *testing.T) {
-	ctx, rt := testsuite.Runtime()
+	_, rt := testsuite.Runtime()
 	rc := rt.RP.Get()
 	defer rc.Close()
 
@@ -32,17 +30,15 @@ func TestImportContactBatch(t *testing.T) {
 	rc.Do("setex", fmt.Sprintf("contact_import_batches_remaining:%d", importID), 10, 2)
 
 	// perform first batch task...
-	task1 := &contacts.ImportContactBatchTask{ContactImportBatchID: batch1ID}
-	err := task1.Perform(ctx, rt, testdata.Org1.ID)
-	require.NoError(t, err)
+	testsuite.QueueBatchTask(t, rt, testdata.Org1, &contacts.ImportContactBatchTask{ContactImportBatchID: batch1ID})
+	testsuite.FlushTasks(t, rt)
 
 	// import is still in progress
 	assertdb.Query(t, rt.DB, `SELECT status FROM contacts_contactimport WHERE id = $1`, importID).Columns(map[string]any{"status": "O"})
 
 	// perform second batch task...
-	task2 := &contacts.ImportContactBatchTask{ContactImportBatchID: batch2ID}
-	err = task2.Perform(ctx, rt, testdata.Org1.ID)
-	require.NoError(t, err)
+	testsuite.QueueBatchTask(t, rt, testdata.Org1, &contacts.ImportContactBatchTask{ContactImportBatchID: batch2ID})
+	testsuite.FlushTasks(t, rt)
 
 	assertdb.Query(t, rt.DB, `SELECT count(*) FROM contacts_contact WHERE id >= 30000`).Returns(3)
 	assertdb.Query(t, rt.DB, `SELECT count(*) FROM contacts_contact WHERE name = 'Norbert' AND language = 'eng'`).Returns(1)

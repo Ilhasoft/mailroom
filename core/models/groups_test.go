@@ -21,18 +21,19 @@ func TestLoadGroups(t *testing.T) {
 	require.NoError(t, err)
 
 	tcs := []struct {
-		id    models.GroupID
-		uuid  assets.GroupUUID
-		name  string
-		query string
+		id            models.GroupID
+		uuid          assets.GroupUUID
+		name          string
+		query         string
+		expectedCount int
 	}{
-		{testdata.ActiveGroup.ID, testdata.ActiveGroup.UUID, "Active", ""},
-		{testdata.ArchivedGroup.ID, testdata.ArchivedGroup.UUID, "Archived", ""},
-		{testdata.BlockedGroup.ID, testdata.BlockedGroup.UUID, "Blocked", ""},
-		{testdata.DoctorsGroup.ID, testdata.DoctorsGroup.UUID, "Doctors", ""},
-		{testdata.OpenTicketsGroup.ID, testdata.OpenTicketsGroup.UUID, "Open Tickets", "tickets > 0"},
-		{testdata.StoppedGroup.ID, testdata.StoppedGroup.UUID, "Stopped", ""},
-		{testdata.TestersGroup.ID, testdata.TestersGroup.UUID, "Testers", ""},
+		{testdata.ActiveGroup.ID, testdata.ActiveGroup.UUID, "Active", "", 124},
+		{testdata.ArchivedGroup.ID, testdata.ArchivedGroup.UUID, "Archived", "", 0},
+		{testdata.BlockedGroup.ID, testdata.BlockedGroup.UUID, "Blocked", "", 0},
+		{testdata.DoctorsGroup.ID, testdata.DoctorsGroup.UUID, "Doctors", "", 121},
+		{testdata.OpenTicketsGroup.ID, testdata.OpenTicketsGroup.UUID, "Open Tickets", "tickets > 0", 0},
+		{testdata.StoppedGroup.ID, testdata.StoppedGroup.UUID, "Stopped", "", 0},
+		{testdata.TestersGroup.ID, testdata.TestersGroup.UUID, "Testers", "", 10},
 	}
 
 	assert.Equal(t, 7, len(groups))
@@ -43,5 +44,9 @@ func TestLoadGroups(t *testing.T) {
 		assert.Equal(t, tc.id, group.ID())
 		assert.Equal(t, tc.name, group.Name())
 		assert.Equal(t, tc.query, group.Query())
+
+		count, err := models.GetGroupContactCount(ctx, rt.DB.DB, group.ID())
+		assert.NoError(t, err)
+		assert.Equal(t, tc.expectedCount, count, "count mismatch for group %s", group.Name())
 	}
 }

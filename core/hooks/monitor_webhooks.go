@@ -2,13 +2,13 @@ package hooks
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/goflow/flows/events"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
 )
 
 type WebhookCall struct {
@@ -36,12 +36,12 @@ func (h *monitorWebhooks) Apply(ctx context.Context, rt *runtime.Runtime, tx *sq
 	for nodeUUID, events := range eventsByNode {
 		node := &models.WebhookNode{UUID: nodeUUID}
 		if err := node.Record(rt, events); err != nil {
-			return errors.Wrap(err, "error recording events for webhook node")
+			return fmt.Errorf("error recording events for webhook node: %w", err)
 		}
 
 		healthy, err := node.Healthy(rt)
 		if err != nil {
-			return errors.Wrap(err, "error getting health of webhook node")
+			return fmt.Errorf("error getting health of webhook node: %w", err)
 		}
 
 		if !healthy {
@@ -53,7 +53,7 @@ func (h *monitorWebhooks) Apply(ctx context.Context, rt *runtime.Runtime, tx *sq
 	if len(unhealthyNodeUUIDs) > 0 {
 		_, err := models.IncidentWebhooksUnhealthy(ctx, tx, rt.RP, oa, unhealthyNodeUUIDs)
 		if err != nil {
-			return errors.Wrap(err, "error creating unhealthy webhooks incident")
+			return fmt.Errorf("error creating unhealthy webhooks incident: %w", err)
 		}
 	}
 

@@ -2,12 +2,12 @@ package contact
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/mailroom/web"
-	"github.com/pkg/errors"
 )
 
 func init() {
@@ -31,7 +31,7 @@ type interruptRequest struct {
 func handleInterrupt(ctx context.Context, rt *runtime.Runtime, r *interruptRequest) (any, int, error) {
 	count, err := models.InterruptSessionsForContacts(ctx, rt.DB, []models.ContactID{r.ContactID})
 	if err != nil {
-		return nil, 0, errors.Wrapf(err, "unable to interrupt contact")
+		return nil, 0, fmt.Errorf("unable to interrupt contact: %w", err)
 	}
 
 	return map[string]any{"sessions": count}, http.StatusOK, nil

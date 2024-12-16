@@ -3,9 +3,9 @@ package models
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
 	"github.com/nyaruka/goflow/assets"
-	"github.com/pkg/errors"
 )
 
 type Global struct {
@@ -22,7 +22,7 @@ func (g *Global) Value() string { return g.Value_ }
 func loadGlobals(ctx context.Context, db *sql.DB, orgID OrgID) ([]assets.Global, error) {
 	rows, err := db.QueryContext(ctx, sqlSelectGlobalsByOrg, orgID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error querying globals for org: %d", orgID)
+		return nil, fmt.Errorf("error querying globals for org: %d: %w", orgID, err)
 	}
 
 	return ScanJSONRows(rows, func() assets.Global { return &Global{} })

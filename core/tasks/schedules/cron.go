@@ -7,22 +7,25 @@ import (
 	"time"
 
 	"github.com/nyaruka/mailroom/core/models"
-	"github.com/nyaruka/mailroom/core/queue"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/core/tasks/msgs"
 	"github.com/nyaruka/mailroom/core/tasks/starts"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
+	"github.com/nyaruka/mailroom/utils/queues"
 )
 
 func init() {
-	tasks.RegisterCron("fire_schedules", false, &schedulesCron{})
+	tasks.RegisterCron("fire_schedules", &schedulesCron{})
 }
 
 type schedulesCron struct{}
 
 func (c *schedulesCron) Next(last time.Time) time.Time {
 	return tasks.CronNext(last, time.Minute)
+}
+
+func (c *schedulesCron) AllInstances() bool {
+	return false
 }
 
 // checkSchedules looks up any expired schedules and fires them, setting the next fire as needed
@@ -39,7 +42,7 @@ func (c *schedulesCron) Run(ctx context.Context, rt *runtime.Runtime) (map[strin
 	// get any expired schedules
 	unfired, err := models.GetUnfiredSchedules(ctx, rt.DB.DB)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error while getting unfired schedules")
+		return nil, fmt.Errorf("error while getting unfired schedules: %w", err)
 	}
 
 	// for each unfired schedule
@@ -48,18 +51,11 @@ func (c *schedulesCron) Run(ctx context.Context, rt *runtime.Runtime) (map[strin
 	noops := 0
 
 	for _, s := range unfired {
-		log := log.With("schedule_id", s.ID())
+		log := log.With("schedule_id", s.ID)
 		now := time.Now()
 
-		// grab our timezone
-		tz, err := s.Timezone()
-		if err != nil {
-			log.Error("error firing schedule, unknown timezone", "error", err)
-			continue
-		}
-
 		// calculate our next fire
-		nextFire, err := s.GetNextFire(tz, now)
+		nextFire, err := s.GetNextFire(now)
 		if err != nil {
 			log.Error("error calculating next fire for schedule", "error", err)
 			continue
@@ -75,11 +71,11 @@ func (c *schedulesCron) Run(ctx context.Context, rt *runtime.Runtime) (map[strin
 		var task tasks.Task
 
 		// if it is a broadcast
-		if s.Broadcast() != nil {
-			log = log.With("broadcast_id", s.Broadcast().ID)
+		if s.Broadcast != nil {
+			log = log.With("broadcast_id", s.Broadcast.ID)
 
 			// clone our broadcast, our schedule broadcast is just a template
-			bcast, err := models.InsertChildBroadcast(ctx, tx, s.Broadcast())
+			bcast, err := models.InsertChildBroadcast(ctx, tx, s.Broadcast)
 			if err != nil {
 				log.Error("error inserting new broadcast for schedule", "error", err)
 				tx.Rollback()
@@ -90,10 +86,10 @@ func (c *schedulesCron) Run(ctx context.Context, rt *runtime.Runtime) (map[strin
 			task = &msgs.SendBroadcastTask{Broadcast: bcast}
 			broadcasts++
 
-		} else if s.Trigger() != nil {
-			log = log.With("trigger_id", s.Trigger().ID())
+		} else if s.Trigger != nil {
+			log = log.With("trigger_id", s.Trigger.ID())
 
-			start := s.Trigger().CreateStart()
+			start := s.Trigger.CreateStart()
 
 			// insert our flow start
 			err := models.InsertFlowStarts(ctx, tx, []*models.FlowStart{start})
@@ -139,7 +135,7 @@ func (c *schedulesCron) Run(ctx context.Context, rt *runtime.Runtime) (map[strin
 
 		// add our task if we have one
 		if task != nil {
-			err = tasks.Queue(rc, queue.BatchQueue, s.OrgID(), task, queue.HighPriority)
+			err = tasks.Queue(rc, tasks.BatchQueue, s.OrgID, task, queues.HighPriority)
 			if err != nil {
 				log.Error(fmt.Sprintf("error queueing %s task from schedule", task.Type()), "error", err)
 			}

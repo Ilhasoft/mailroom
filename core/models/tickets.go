@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"fmt"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -12,7 +13,6 @@ import (
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/null/v3"
-	"github.com/pkg/errors"
 )
 
 type TicketID int
@@ -172,7 +172,7 @@ func LoadTickets(ctx context.Context, db *sqlx.DB, ids []TicketID) ([]*Ticket, e
 func loadTickets(ctx context.Context, db *sqlx.DB, query string, params ...any) ([]*Ticket, error) {
 	rows, err := db.QueryxContext(ctx, query, params...)
 	if err != nil && err != sql.ErrNoRows {
-		return nil, errors.Wrap(err, "error loading tickets")
+		return nil, fmt.Errorf("error loading tickets: %w", err)
 	}
 	defer rows.Close()
 
@@ -181,7 +181,7 @@ func loadTickets(ctx context.Context, db *sqlx.DB, query string, params ...any) 
 		ticket := &Ticket{}
 		err = rows.StructScan(&ticket.t)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error unmarshalling ticket")
+			return nil, fmt.Errorf("error unmarshalling ticket: %w", err)
 		}
 		tickets = append(tickets, ticket)
 	}
@@ -335,22 +335,22 @@ func TicketsAssign(ctx context.Context, db DBorTx, oa *OrgAssets, userID UserID,
 	// mark the tickets as assigned in the db
 	_, err := db.ExecContext(ctx, sqlUpdateTicketsAssignment, pq.Array(ids), assigneeID, now)
 	if err != nil {
-		return nil, errors.Wrap(err, "error updating tickets")
+		return nil, fmt.Errorf("error updating tickets: %w", err)
 	}
 
 	err = InsertTicketEvents(ctx, db, events)
 	if err != nil {
-		return nil, errors.Wrap(err, "error inserting ticket events")
+		return nil, fmt.Errorf("error inserting ticket events: %w", err)
 	}
 
 	err = NotificationsFromTicketEvents(ctx, db, oa, eventsByTicket)
 	if err != nil {
-		return nil, errors.Wrap(err, "error inserting notifications")
+		return nil, fmt.Errorf("error inserting notifications: %w", err)
 	}
 
 	err = insertTicketDailyCounts(ctx, db, TicketDailyCountAssignment, oa.Env().Timezone(), assignmentCounts)
 	if err != nil {
-		return nil, errors.Wrap(err, "error inserting assignment counts")
+		return nil, fmt.Errorf("error inserting assignment counts: %w", err)
 	}
 
 	return eventsByTicket, nil
@@ -369,17 +369,17 @@ func TicketsAddNote(ctx context.Context, db DBorTx, oa *OrgAssets, userID UserID
 
 	err := UpdateTicketLastActivity(ctx, db, tickets)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error updating ticket activity")
+		return nil, fmt.Errorf("error updating ticket activity: %w", err)
 	}
 
 	err = InsertTicketEvents(ctx, db, events)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error inserting ticket events")
+		return nil, fmt.Errorf("error inserting ticket events: %w", err)
 	}
 
 	err = NotificationsFromTicketEvents(ctx, db, oa, eventsByTicket)
 	if err != nil {
-		return nil, errors.Wrap(err, "error inserting notifications")
+		return nil, fmt.Errorf("error inserting notifications: %w", err)
 	}
 
 	return eventsByTicket, nil
@@ -414,12 +414,12 @@ func TicketsChangeTopic(ctx context.Context, db DBorTx, oa *OrgAssets, userID Us
 	// mark the tickets as assigned in the db
 	_, err := db.ExecContext(ctx, sqlUpdateTicketsTopic, pq.Array(ids), topicID, now)
 	if err != nil {
-		return nil, errors.Wrap(err, "error updating tickets")
+		return nil, fmt.Errorf("error updating tickets: %w", err)
 	}
 
 	err = InsertTicketEvents(ctx, db, events)
 	if err != nil {
-		return nil, errors.Wrap(err, "error inserting ticket events")
+		return nil, fmt.Errorf("error inserting ticket events: %w", err)
 	}
 
 	return eventsByTicket, nil
@@ -457,15 +457,15 @@ func CloseTickets(ctx context.Context, rt *runtime.Runtime, oa *OrgAssets, userI
 	// mark the tickets as closed in the db
 	_, err := rt.DB.ExecContext(ctx, sqlCloseTickets, pq.Array(ids), now)
 	if err != nil {
-		return nil, errors.Wrap(err, "error updating tickets")
+		return nil, fmt.Errorf("error updating tickets: %w", err)
 	}
 
 	if err := InsertTicketEvents(ctx, rt.DB, events); err != nil {
-		return nil, errors.Wrapf(err, "error inserting ticket events")
+		return nil, fmt.Errorf("error inserting ticket events: %w", err)
 	}
 
 	if err := recalcGroupsForTicketChanges(ctx, rt.DB, oa, contactIDs); err != nil {
-		return nil, errors.Wrapf(err, "error recalculting groups")
+		return nil, fmt.Errorf("error recalculting groups: %w", err)
 	}
 
 	return eventsByTicket, nil
@@ -503,16 +503,16 @@ func ReopenTickets(ctx context.Context, rt *runtime.Runtime, oa *OrgAssets, user
 	// mark the tickets as opened in the db
 	_, err := rt.DB.ExecContext(ctx, sqlReopenTickets, pq.Array(ids), now)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error updating tickets")
+		return nil, fmt.Errorf("error updating tickets: %w", err)
 	}
 
 	err = InsertTicketEvents(ctx, rt.DB, events)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error inserting ticket events")
+		return nil, fmt.Errorf("error inserting ticket events: %w", err)
 	}
 
 	if err := recalcGroupsForTicketChanges(ctx, rt.DB, oa, contactIDs); err != nil {
-		return nil, errors.Wrapf(err, "error recalculting groups")
+		return nil, fmt.Errorf("error recalculting groups: %w", err)
 	}
 
 	return eventsByTicket, nil
@@ -527,14 +527,14 @@ func recalcGroupsForTicketChanges(ctx context.Context, db DBorTx, oa *OrgAssets,
 
 	contacts, err := LoadContacts(ctx, db, oa, ids)
 	if err != nil {
-		return errors.Wrap(err, "error loading contacts with ticket changes")
+		return fmt.Errorf("error loading contacts with ticket changes: %w", err)
 	}
 
 	flowContacts := make([]*flows.Contact, len(contacts))
 	for i, contact := range contacts {
 		flowContacts[i], err = contact.FlowContact(oa)
 		if err != nil {
-			return errors.Wrap(err, "error loading flow contact")
+			return fmt.Errorf("error loading flow contact: %w", err)
 		}
 	}
 

@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"fmt"
 	"strings"
 
 	"github.com/nyaruka/goflow/assets"
 	"github.com/nyaruka/null/v3"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -87,7 +87,7 @@ LEFT JOIN LATERAL (SELECT id, uuid, name FROM tickets_team WHERE tickets_team.id
 func loadUsers(ctx context.Context, db *sql.DB, orgID OrgID) ([]assets.User, error) {
 	rows, err := db.QueryContext(ctx, sqlSelectUsersByOrg, orgID)
 	if err != nil && err != sql.ErrNoRows {
-		return nil, errors.Wrapf(err, "error querying users for org: %d", orgID)
+		return nil, fmt.Errorf("error querying users for org: %d: %w", orgID, err)
 	}
 
 	return ScanJSONRows(rows, func() assets.User { return &User{} })

@@ -2,6 +2,7 @@ package ivr_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -10,13 +11,12 @@ import (
 	"github.com/nyaruka/gocommon/urns"
 	"github.com/nyaruka/mailroom/core/ivr"
 	"github.com/nyaruka/mailroom/core/models"
-	"github.com/nyaruka/mailroom/core/queue"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/core/tasks/starts"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/mailroom/testsuite"
 	"github.com/nyaruka/mailroom/testsuite/testdata"
-	"github.com/pkg/errors"
+	"github.com/nyaruka/mailroom/utils/queues"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,9 +37,9 @@ func TestIVR(t *testing.T) {
 	start := models.NewFlowStart(testdata.Org1.ID, models.StartTypeTrigger, testdata.IVRFlow.ID).
 		WithContactIDs([]models.ContactID{testdata.Cathy.ID})
 
-	service.callError = errors.Errorf("unable to create call")
+	service.callError = fmt.Errorf("unable to create call")
 
-	err := tasks.Queue(rc, queue.BatchQueue, testdata.Org1.ID, &starts.StartFlowTask{FlowStart: start}, queue.DefaultPriority)
+	err := tasks.Queue(rc, tasks.BatchQueue, testdata.Org1.ID, &starts.StartFlowTask{FlowStart: start}, queues.DefaultPriority)
 	require.NoError(t, err)
 
 	testsuite.FlushTasks(t, rt)
@@ -51,7 +51,7 @@ func TestIVR(t *testing.T) {
 	service.callError = nil
 	service.callID = ivr.CallID("call1")
 
-	err = tasks.Queue(rc, queue.BatchQueue, testdata.Org1.ID, &starts.StartFlowTask{FlowStart: start}, queue.DefaultPriority)
+	err = tasks.Queue(rc, tasks.BatchQueue, testdata.Org1.ID, &starts.StartFlowTask{FlowStart: start}, queues.DefaultPriority)
 	require.NoError(t, err)
 
 	testsuite.FlushTasks(t, rt)
@@ -62,7 +62,7 @@ func TestIVR(t *testing.T) {
 	service.callError = nil
 	service.callID = ivr.CallID("call1")
 
-	err = tasks.Queue(rc, queue.BatchQueue, testdata.Org1.ID, &starts.StartFlowTask{FlowStart: start}, queue.DefaultPriority)
+	err = tasks.Queue(rc, tasks.BatchQueue, testdata.Org1.ID, &starts.StartFlowTask{FlowStart: start}, queues.DefaultPriority)
 	require.NoError(t, err)
 
 	testsuite.FlushTasks(t, rt)

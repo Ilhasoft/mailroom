@@ -30,8 +30,10 @@ func handleAirtimeTransferred(ctx context.Context, rt *runtime.Runtime, tx *sqlx
 	}
 
 	transfer := models.NewAirtimeTransfer(
+		event.TransferUUID,
 		oa.OrgID(),
 		status,
+		event.ExternalID,
 		scene.ContactID(),
 		event.Sender,
 		event.Recipient,

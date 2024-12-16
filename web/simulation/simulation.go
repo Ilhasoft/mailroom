@@ -3,6 +3,7 @@ package simulation
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/nyaruka/gocommon/urns"
@@ -18,7 +19,6 @@ import (
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/mailroom/web"
-	"github.com/pkg/errors"
 )
 
 var testChannel = assets.NewChannelReference("440099cf-200c-4d45-a8e7-4a564f4a0e8b", "Test Channel")
@@ -70,10 +70,10 @@ func newSimulationResponse(session flows.Session, sprint flows.Sprint) *simulati
 	if session != nil {
 		context = session.CurrentContext()
 
-		// include object defaults which are not marshaled by default
+		// include object defaults which are not marshaled by default, but not deprecated values
 		if context != nil {
 			tools.ContextWalkObjects(context, func(o *types.XObject) {
-				o.SetMarshalDefault(true)
+				o.SetMarshalOptions(true, false)
 			})
 		}
 	}
@@ -120,19 +120,19 @@ func handleSimulationEvents(ctx context.Context, db models.DBorTx, oa *models.Or
 func handleStart(ctx context.Context, rt *runtime.Runtime, r *startRequest) (any, int, error) {
 	oa, err := models.GetOrgAssets(ctx, rt, r.OrgID)
 	if err != nil {
-		return nil, http.StatusBadRequest, errors.Wrapf(err, "unable to load org assets")
+		return nil, http.StatusBadRequest, fmt.Errorf("unable to load org assets: %w", err)
 	}
 
 	// create clone of assets for simulation
 	oa, err = oa.CloneForSimulation(ctx, rt, r.flows(), r.channels())
 	if err != nil {
-		return nil, http.StatusBadRequest, errors.Wrapf(err, "unable to clone org")
+		return nil, http.StatusBadRequest, fmt.Errorf("unable to clone org: %w", err)
 	}
 
 	// read our trigger
 	trigger, err := triggers.ReadTrigger(oa.SessionAssets(), r.Trigger, assets.IgnoreMissing)
 	if err != nil {
-		return nil, http.StatusBadRequest, errors.Wrapf(err, "unable to read trigger")
+		return nil, http.StatusBadRequest, fmt.Errorf("unable to read trigger: %w", err)
 	}
 
 	return triggerFlow(ctx, rt, oa, trigger)
@@ -141,14 +141,14 @@ func handleStart(ctx context.Context, rt *runtime.Runtime, r *startRequest) (any
 // triggerFlow creates a new session with the passed in trigger, returning our standard response
 func triggerFlow(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, trigger flows.Trigger) (any, int, error) {
 	// start our flow session
-	session, sprint, err := goflow.Simulator(rt.Config).NewSession(oa.SessionAssets(), trigger)
+	session, sprint, err := goflow.Simulator(ctx, rt).NewSession(oa.SessionAssets(), trigger)
 	if err != nil {
-		return nil, 0, errors.Wrapf(err, "error starting session")
+		return nil, 0, fmt.Errorf("error starting session: %w", err)
 	}
 
 	err = handleSimulationEvents(ctx, rt.DB, oa, sprint.Events())
 	if err != nil {
-		return nil, 0, errors.Wrapf(err, "error handling simulation events")
+		return nil, 0, fmt.Errorf("error handling simulation events: %w", err)
 	}
 
 	return newSimulationResponse(session, sprint), http.StatusOK, nil
@@ -185,7 +185,7 @@ func handleResume(ctx context.Context, rt *runtime.Runtime, r *resumeRequest) (a
 		return nil, http.StatusBadRequest, err
 	}
 
-	session, err := goflow.Simulator(rt.Config).ReadSession(oa.SessionAssets(), r.Session, assets.IgnoreMissing)
+	session, err := goflow.Simulator(ctx, rt).ReadSession(oa.SessionAssets(), r.Session, assets.IgnoreMissing)
 	if err != nil {
 		return nil, http.StatusBadRequest, err
 	}
@@ -216,7 +216,7 @@ func handleResume(ctx context.Context, rt *runtime.Runtime, r *resumeRequest) (a
 			if flow == nil || (!flow.IgnoreTriggers() && trigger.TriggerType() == models.KeywordTriggerType) {
 				triggeredFlow, err := oa.FlowByID(trigger.FlowID())
 				if err != nil && err != models.ErrNotFound {
-					return nil, 0, errors.Wrapf(err, "unable to load triggered flow")
+					return nil, 0, fmt.Errorf("unable to load triggered flow: %w", err)
 				}
 
 				if triggeredFlow != nil {
@@ -254,7 +254,7 @@ func handleResume(ctx context.Context, rt *runtime.Runtime, r *resumeRequest) (a
 
 	err = handleSimulationEvents(ctx, rt.DB, oa, sprint.Events())
 	if err != nil {
-		return nil, 0, errors.Wrapf(err, "error handling simulation events")
+		return nil, 0, fmt.Errorf("error handling simulation events: %w", err)
 	}
 
 	return newSimulationResponse(session, sprint), http.StatusOK, nil

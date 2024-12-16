@@ -4,10 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"fmt"
 
 	"github.com/nyaruka/goflow/assets"
 	"github.com/nyaruka/null/v3"
-	"github.com/pkg/errors"
 )
 
 type TopicID int
@@ -46,7 +46,7 @@ SELECT ROW_TO_JSON(r) FROM (
 func loadTopics(ctx context.Context, db *sql.DB, orgID OrgID) ([]assets.Topic, error) {
 	rows, err := db.QueryContext(ctx, sqlSelectTopicsByOrg, orgID)
 	if err != nil && err != sql.ErrNoRows {
-		return nil, errors.Wrapf(err, "error querying topics for org: %d", orgID)
+		return nil, fmt.Errorf("error querying topics for org: %d: %w", orgID, err)
 	}
 
 	return ScanJSONRows(rows, func() assets.Topic { return &Topic{} })

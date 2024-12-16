@@ -17,6 +17,7 @@ func TestPopulateTask(t *testing.T) {
 
 	defer testsuite.Reset(testsuite.ResetAll)
 
+	oa := testdata.Org1.Load(rt)
 	group := testdata.InsertContactGroup(rt, testdata.Org1, "e52fee05-2f95-4445-aef6-2fe7dac2fd56", "Women", "gender = F")
 	start := dates.Now()
 
@@ -24,7 +25,7 @@ func TestPopulateTask(t *testing.T) {
 		GroupID: group.ID,
 		Query:   "gender = F",
 	}
-	err := task.Perform(ctx, rt, testdata.Org1.ID)
+	err := task.Perform(ctx, rt, oa)
 	require.NoError(t, err)
 
 	assertdb.Query(t, rt.DB, `SELECT count(*) FROM contacts_contactgroup_contacts WHERE contactgroup_id = $1`, group.ID).Returns(1)

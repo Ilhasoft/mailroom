@@ -3,6 +3,7 @@ package contact
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -11,7 +12,6 @@ import (
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/mailroom/web"
-	"github.com/pkg/errors"
 	"golang.org/x/exp/maps"
 )
 
@@ -76,7 +76,7 @@ type modifyResponse struct {
 func handleModify(ctx context.Context, rt *runtime.Runtime, r *modifyRequest) (any, int, error) {
 	oa, err := models.GetOrgAssets(ctx, rt, r.OrgID)
 	if err != nil {
-		return nil, 0, errors.Wrapf(err, "unable to load org assets")
+		return nil, 0, fmt.Errorf("unable to load org assets: %w", err)
 	}
 
 	// read the modifiers from the request
@@ -118,7 +118,7 @@ func tryToLockAndModify(ctx context.Context, rt *runtime.Runtime, oa *models.Org
 	// load our contacts
 	contacts, err := models.LoadContacts(ctx, rt.DB, oa, locked)
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "unable to load contacts")
+		return nil, nil, fmt.Errorf("unable to load contacts: %w", err)
 	}
 
 	// convert to map of flow contacts to modifiers
@@ -126,7 +126,7 @@ func tryToLockAndModify(ctx context.Context, rt *runtime.Runtime, oa *models.Org
 	for _, contact := range contacts {
 		flowContact, err := contact.FlowContact(oa)
 		if err != nil {
-			return nil, nil, errors.Wrap(err, "error creating flow contact")
+			return nil, nil, fmt.Errorf("error creating flow contact: %w", err)
 		}
 
 		modifiersByContact[flowContact] = mods

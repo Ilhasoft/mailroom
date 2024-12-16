@@ -15,7 +15,6 @@ import (
 	"github.com/nyaruka/null/v3"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/pkg/errors"
 )
 
 // FlowID is the type for flow IDs
@@ -31,13 +30,12 @@ type FlowType string
 const (
 	FlowTypeMessaging  = FlowType("M")
 	FlowTypeBackground = FlowType("B")
-	FlowTypeSurveyor   = FlowType("S")
 	FlowTypeVoice      = FlowType("V")
 )
 
 // Interrupts returns whether this flow type interrupts existing sessions
 func (t FlowType) Interrupts() bool {
-	return t != FlowTypeBackground && t != FlowTypeSurveyor
+	return t != FlowTypeBackground
 }
 
 const (
@@ -47,7 +45,6 @@ const (
 var flowTypeMapping = map[flows.FlowType]FlowType{
 	flows.FlowTypeMessaging:           FlowTypeMessaging,
 	flows.FlowTypeMessagingBackground: FlowTypeBackground,
-	flows.FlowTypeMessagingOffline:    FlowTypeSurveyor,
 	flows.FlowTypeVoice:               FlowTypeVoice,
 }
 
@@ -152,7 +149,7 @@ func loadFlow(ctx context.Context, db *sql.DB, sql string, orgID OrgID, arg any)
 
 	rows, err := db.QueryContext(ctx, sql, orgID, arg)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error querying flow by: %v", arg)
+		return nil, fmt.Errorf("error querying flow by: %v: %w", arg, err)
 	}
 	defer rows.Close()
 
@@ -163,7 +160,7 @@ func loadFlow(ctx context.Context, db *sql.DB, sql string, orgID OrgID, arg any)
 
 	err = dbutil.ScanJSON(rows, &flow.f)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error reading flow definition by: %s", arg)
+		return nil, fmt.Errorf("error reading flow definition by: %s: %w", arg, err)
 	}
 
 	slog.Debug("loaded flow", "elapsed", time.Since(start), "org_id", orgID, "flow", arg)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"fmt"
 
 	"github.com/nyaruka/goflow/assets"
 	"github.com/nyaruka/goflow/flows"
@@ -14,7 +15,6 @@ import (
 	"github.com/nyaruka/mailroom/core/goflow"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/null/v3"
-	"github.com/pkg/errors"
 )
 
 // ClassifierID is our type for classifier IDs
@@ -50,9 +50,9 @@ func init() {
 	goflow.RegisterClassificationServiceFactory(classificationServiceFactory)
 }
 
-func classificationServiceFactory(c *runtime.Config) engine.ClassificationServiceFactory {
+func classificationServiceFactory(rt *runtime.Runtime) engine.ClassificationServiceFactory {
 	return func(classifier *flows.Classifier) (flows.ClassificationService, error) {
-		return classifier.Asset().(*Classifier).AsService(c, classifier)
+		return classifier.Asset().(*Classifier).AsService(rt.Config, classifier)
 	}
 }
 
@@ -94,7 +94,7 @@ func (c *Classifier) AsService(cfg *runtime.Config, classifier *flows.Classifier
 	case ClassifierTypeWit:
 		accessToken := c.Config_[WitConfigAccessToken]
 		if accessToken == "" {
-			return nil, errors.Errorf("missing %s for Wit classifier: %s", WitConfigAccessToken, c.UUID())
+			return nil, fmt.Errorf("missing %s for Wit classifier: %s", WitConfigAccessToken, c.UUID())
 		}
 		return wit.NewService(httpClient, httpRetries, classifier, accessToken), nil
 
@@ -104,7 +104,7 @@ func (c *Classifier) AsService(cfg *runtime.Config, classifier *flows.Classifier
 		key := c.Config_[LuisConfigPredictionKey]
 		slot := c.Config_[LuisConfigSlot]
 		if endpoint == "" || appID == "" || key == "" || slot == "" {
-			return nil, errors.Errorf("missing %s, %s, %s or %s on LUIS classifier: %s",
+			return nil, fmt.Errorf("missing %s, %s, %s or %s on LUIS classifier: %s",
 				LuisConfigAppID, LuisConfigPredictionEndpoint, LuisConfigPredictionKey, LuisConfigSlot, c.UUID())
 		}
 		return luis.NewService(httpClient, httpRetries, httpAccess, classifier, endpoint, appID, key, slot), nil
@@ -112,12 +112,12 @@ func (c *Classifier) AsService(cfg *runtime.Config, classifier *flows.Classifier
 	case ClassifierTypeBothub:
 		accessToken := c.Config_[BothubConfigAccessToken]
 		if accessToken == "" {
-			return nil, errors.Errorf("missing %s for Bothub classifier: %s", BothubConfigAccessToken, c.UUID())
+			return nil, fmt.Errorf("missing %s for Bothub classifier: %s", BothubConfigAccessToken, c.UUID())
 		}
 		return bothub.NewService(httpClient, httpRetries, classifier, accessToken), nil
 
 	default:
-		return nil, errors.Errorf("unknown classifier type '%s' for classifier: %s", c.Type(), c.UUID())
+		return nil, fmt.Errorf("unknown classifier type '%s' for classifier: %s", c.Type(), c.UUID())
 	}
 }
 
@@ -125,7 +125,7 @@ func (c *Classifier) AsService(cfg *runtime.Config, classifier *flows.Classifier
 func loadClassifiers(ctx context.Context, db *sql.DB, orgID OrgID) ([]assets.Classifier, error) {
 	rows, err := db.QueryContext(ctx, sqlSelectClassifiers, orgID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error querying classifiers for org: %d", orgID)
+		return nil, fmt.Errorf("error querying classifiers for org: %d: %w", orgID, err)
 	}
 
 	clfs, err := ScanJSONRows(rows, func() assets.Classifier { return &Classifier{} })

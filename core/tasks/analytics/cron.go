@@ -6,13 +6,12 @@ import (
 	"time"
 
 	"github.com/nyaruka/gocommon/analytics"
-	"github.com/nyaruka/mailroom/core/queue"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/runtime"
 )
 
 func init() {
-	tasks.RegisterCron("analytics", true, &analyticsCron{})
+	tasks.RegisterCron("analytics", &analyticsCron{})
 }
 
 // calculates a bunch of stats every minute and both logs them and sends them to librato
@@ -28,6 +27,10 @@ func (c *analyticsCron) Next(last time.Time) time.Time {
 	return tasks.CronNext(last, time.Minute)
 }
 
+func (c *analyticsCron) AllInstances() bool {
+	return true
+}
+
 func (c *analyticsCron) Run(ctx context.Context, rt *runtime.Runtime) (map[string]any, error) {
 	// We wait 15 seconds since we fire at the top of the minute, the same as expirations.
 	// That way any metrics related to the size of our queue are a bit more accurate (all expirations can
@@ -39,13 +42,13 @@ func (c *analyticsCron) Run(ctx context.Context, rt *runtime.Runtime) (map[strin
 	defer rc.Close()
 
 	// calculate size of batch queue
-	batchSize, err := queue.Size(rc, queue.BatchQueue)
+	batchSize, err := tasks.BatchQueue.Size(rc)
 	if err != nil {
 		slog.Error("error calculating batch queue size", "error", err)
 	}
 
 	// and size of handler queue
-	handlerSize, err := queue.Size(rc, queue.HandlerQueue)
+	handlerSize, err := tasks.HandlerQueue.Size(rc)
 	if err != nil {
 		slog.Error("error calculating handler queue size", "error", err)
 	}

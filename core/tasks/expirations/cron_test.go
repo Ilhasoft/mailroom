@@ -9,7 +9,7 @@ import (
 	"github.com/nyaruka/gocommon/jsonx"
 	_ "github.com/nyaruka/mailroom/core/handlers"
 	"github.com/nyaruka/mailroom/core/models"
-	"github.com/nyaruka/mailroom/core/queue"
+	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/core/tasks/expirations"
 	"github.com/nyaruka/mailroom/core/tasks/handler"
 	"github.com/nyaruka/mailroom/testsuite"
@@ -29,26 +29,26 @@ func TestExpirations(t *testing.T) {
 
 	// create single run session for Cathy, no parent to resume
 	s1ID := testdata.InsertWaitingSession(rt, testdata.Org1, testdata.Cathy, models.FlowTypeMessaging, testdata.Favorites, models.NilCallID, time.Now(), time.Now(), false, nil)
-	r1ID := testdata.InsertFlowRun(rt, testdata.Org1, s1ID, testdata.Cathy, testdata.Favorites, models.RunStatusWaiting)
+	r1ID := testdata.InsertFlowRun(rt, testdata.Org1, s1ID, testdata.Cathy, testdata.Favorites, models.RunStatusWaiting, "")
 
 	// create parent/child session for George, can resume
 	s2ID := testdata.InsertWaitingSession(rt, testdata.Org1, testdata.George, models.FlowTypeMessaging, testdata.Favorites, models.NilCallID, time.Now(), time.Now(), true, nil)
-	r2ID := testdata.InsertFlowRun(rt, testdata.Org1, s2ID, testdata.George, testdata.Favorites, models.RunStatusActive)
-	r3ID := testdata.InsertFlowRun(rt, testdata.Org1, s2ID, testdata.George, testdata.Favorites, models.RunStatusWaiting)
+	r2ID := testdata.InsertFlowRun(rt, testdata.Org1, s2ID, testdata.George, testdata.Favorites, models.RunStatusActive, "")
+	r3ID := testdata.InsertFlowRun(rt, testdata.Org1, s2ID, testdata.George, testdata.Favorites, models.RunStatusWaiting, "")
 
 	// create session for Bob with expiration in future
 	s3ID := testdata.InsertWaitingSession(rt, testdata.Org1, testdata.Bob, models.FlowTypeMessaging, testdata.Favorites, models.NilCallID, time.Now(), time.Now().Add(time.Hour), true, nil)
-	r4ID := testdata.InsertFlowRun(rt, testdata.Org1, s3ID, testdata.Bob, testdata.Favorites, models.RunStatusWaiting)
+	r4ID := testdata.InsertFlowRun(rt, testdata.Org1, s3ID, testdata.Bob, testdata.Favorites, models.RunStatusWaiting, "")
 
 	// create an IVR session for Alexandria
 	call := testdata.InsertCall(rt, testdata.Org1, testdata.TwilioChannel, testdata.Alexandria)
 	s4ID := testdata.InsertWaitingSession(rt, testdata.Org1, testdata.Alexandria, models.FlowTypeVoice, testdata.IVRFlow, call, time.Now(), time.Now(), false, nil)
-	r5ID := testdata.InsertFlowRun(rt, testdata.Org1, s4ID, testdata.Alexandria, testdata.IVRFlow, models.RunStatusWaiting)
+	r5ID := testdata.InsertFlowRun(rt, testdata.Org1, s4ID, testdata.Alexandria, testdata.IVRFlow, models.RunStatusWaiting, "")
 
 	// create a parent/child session for the blocked contact
 	s5ID := testdata.InsertWaitingSession(rt, testdata.Org1, blake, models.FlowTypeMessaging, testdata.Favorites, models.NilCallID, time.Now(), time.Now(), true, nil)
-	r6ID := testdata.InsertFlowRun(rt, testdata.Org1, s5ID, blake, testdata.Favorites, models.RunStatusActive)
-	r7ID := testdata.InsertFlowRun(rt, testdata.Org1, s5ID, blake, testdata.Favorites, models.RunStatusWaiting)
+	r6ID := testdata.InsertFlowRun(rt, testdata.Org1, s5ID, blake, testdata.Favorites, models.RunStatusActive, "")
+	r7ID := testdata.InsertFlowRun(rt, testdata.Org1, s5ID, blake, testdata.Favorites, models.RunStatusWaiting, "")
 
 	time.Sleep(5 * time.Millisecond)
 
@@ -81,7 +81,7 @@ func TestExpirations(t *testing.T) {
 	assertdb.Query(t, rt.DB, `SELECT status FROM flows_flowrun WHERE id = $1;`, r7ID).Columns(map[string]any{"status": "W"})
 
 	// should have created two expiration tasks
-	task, err := queue.PopNextTask(rc, queue.HandlerQueue)
+	task, err := tasks.HandlerQueue.Pop(rc)
 	assert.NoError(t, err)
 	assert.NotNil(t, task)
 
@@ -90,7 +90,7 @@ func TestExpirations(t *testing.T) {
 	jsonx.MustUnmarshal(task.Task, eventTask)
 	assert.Equal(t, testdata.George.ID, eventTask.ContactID)
 
-	task, err = queue.PopNextTask(rc, queue.HandlerQueue)
+	task, err = tasks.HandlerQueue.Pop(rc)
 	assert.NoError(t, err)
 	assert.NotNil(t, task)
 
@@ -100,7 +100,7 @@ func TestExpirations(t *testing.T) {
 	assert.Equal(t, blake.ID, eventTask.ContactID)
 
 	// no other tasks
-	task, err = queue.PopNextTask(rc, queue.HandlerQueue)
+	task, err = tasks.HandlerQueue.Pop(rc)
 	assert.NoError(t, err)
 	assert.Nil(t, task)
 }
@@ -115,16 +115,16 @@ func TestExpireVoiceSessions(t *testing.T) {
 	// create voice session for Cathy
 	conn1ID := testdata.InsertCall(rt, testdata.Org1, testdata.TwilioChannel, testdata.Cathy)
 	s1ID := testdata.InsertWaitingSession(rt, testdata.Org1, testdata.Cathy, models.FlowTypeVoice, testdata.IVRFlow, conn1ID, time.Now(), time.Now(), false, nil)
-	r1ID := testdata.InsertFlowRun(rt, testdata.Org1, s1ID, testdata.Cathy, testdata.Favorites, models.RunStatusWaiting)
+	r1ID := testdata.InsertFlowRun(rt, testdata.Org1, s1ID, testdata.Cathy, testdata.Favorites, models.RunStatusWaiting, "")
 
 	// create voice session for Bob with expiration in future
 	conn2ID := testdata.InsertCall(rt, testdata.Org1, testdata.TwilioChannel, testdata.Bob)
 	s2ID := testdata.InsertWaitingSession(rt, testdata.Org1, testdata.Bob, models.FlowTypeMessaging, testdata.IVRFlow, conn2ID, time.Now(), time.Now().Add(time.Hour), false, nil)
-	r2ID := testdata.InsertFlowRun(rt, testdata.Org1, s2ID, testdata.Bob, testdata.IVRFlow, models.RunStatusWaiting)
+	r2ID := testdata.InsertFlowRun(rt, testdata.Org1, s2ID, testdata.Bob, testdata.IVRFlow, models.RunStatusWaiting, "")
 
 	// create a messaging session for Alexandria
 	s3ID := testdata.InsertWaitingSession(rt, testdata.Org1, testdata.Alexandria, models.FlowTypeMessaging, testdata.Favorites, models.NilCallID, time.Now(), time.Now(), false, nil)
-	r3ID := testdata.InsertFlowRun(rt, testdata.Org1, s3ID, testdata.Alexandria, testdata.Favorites, models.RunStatusWaiting)
+	r3ID := testdata.InsertFlowRun(rt, testdata.Org1, s3ID, testdata.Alexandria, testdata.Favorites, models.RunStatusWaiting, "")
 
 	time.Sleep(5 * time.Millisecond)
 

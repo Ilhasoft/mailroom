@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -9,7 +10,6 @@ import (
 	"github.com/nyaruka/goflow/flows/events"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
 )
 
 // UpdateCampaignEventsHook is our hook to update any campaign events
@@ -112,7 +112,7 @@ func (h *updateCampaignEventsHook) Apply(ctx context.Context, rt *runtime.Runtim
 		for ce := range addEvents {
 			scheduled, err := ce.ScheduleForContact(tz, now, s.Contact())
 			if err != nil {
-				return errors.Wrapf(err, "error calculating offset")
+				return fmt.Errorf("error calculating offset: %w", err)
 			}
 
 			// no scheduled date? move on
@@ -132,13 +132,13 @@ func (h *updateCampaignEventsHook) Apply(ctx context.Context, rt *runtime.Runtim
 	// first delete all our removed fires
 	err := models.DeleteUnfiredEventFires(ctx, tx, deletes)
 	if err != nil {
-		return errors.Wrapf(err, "error deleting unfired event fires")
+		return fmt.Errorf("error deleting unfired event fires: %w", err)
 	}
 
 	// then insert our new ones
 	err = models.AddEventFires(ctx, tx, inserts)
 	if err != nil {
-		return errors.Wrapf(err, "error inserting new event fires")
+		return fmt.Errorf("error inserting new event fires: %w", err)
 	}
 
 	return nil

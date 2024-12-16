@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/jmoiron/sqlx"
@@ -10,7 +12,6 @@ import (
 	"github.com/nyaruka/mailroom/core/hooks"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
 )
 
 func init() {
@@ -20,7 +21,7 @@ func init() {
 // handleInputLabelsAdded is called for each input labels added event in a scene
 func handleInputLabelsAdded(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *models.OrgAssets, scene *models.Scene, e flows.Event) error {
 	if scene.Session() == nil {
-		return errors.Errorf("cannot add label, not in a session")
+		return errors.New("cannot add label, not in a session")
 	}
 
 	event := e.(*events.InputLabelsAddedEvent)
@@ -37,7 +38,7 @@ func handleInputLabelsAdded(ctx context.Context, rt *runtime.Runtime, tx *sqlx.T
 	for _, l := range event.Labels {
 		label := oa.LabelByUUID(l.UUID)
 		if label == nil {
-			return errors.Errorf("unable to find label with UUID: %s", l.UUID)
+			return fmt.Errorf("unable to find label with UUID: %s", l.UUID)
 		}
 
 		scene.AppendToEventPreCommitHook(hooks.CommitAddedLabelsHook, &models.MsgLabelAdd{MsgID: inputMsgID, LabelID: label.ID()})

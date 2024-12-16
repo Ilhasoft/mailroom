@@ -2,6 +2,7 @@ package contact
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/nyaruka/goflow/assets"
@@ -9,7 +10,6 @@ import (
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/mailroom/web"
-	"github.com/pkg/errors"
 )
 
 func init() {
@@ -68,13 +68,13 @@ type contactInfo struct {
 func handleInspect(ctx context.Context, rt *runtime.Runtime, r *inspectRequest) (any, int, error) {
 	oa, err := models.GetOrgAssets(ctx, rt, r.OrgID)
 	if err != nil {
-		return nil, 0, errors.Wrapf(err, "error loading org assets")
+		return nil, 0, fmt.Errorf("error loading org assets: %w", err)
 	}
 
 	// load our contacts
 	contacts, err := models.LoadContacts(ctx, rt.DB, oa, r.ContactIDs)
 	if err != nil {
-		return nil, 0, errors.Wrapf(err, "error loading contact")
+		return nil, 0, fmt.Errorf("error loading contact: %w", err)
 	}
 
 	response := make(map[flows.ContactID]*contactInfo, len(contacts))
@@ -82,7 +82,7 @@ func handleInspect(ctx context.Context, rt *runtime.Runtime, r *inspectRequest) 
 	for _, c := range contacts {
 		flowContact, err := c.FlowContact(oa)
 		if err != nil {
-			return nil, 0, errors.Wrapf(err, "error creating flow contact")
+			return nil, 0, fmt.Errorf("error creating flow contact: %w", err)
 		}
 
 		// first add the URNs which have a corresponding channel (engine considers these destinations)

@@ -2,21 +2,18 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/nyaruka/mailroom/core/models"
-	"github.com/nyaruka/mailroom/core/queue"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/redisx"
-	"github.com/pkg/errors"
 )
 
 func init() {
-	tasks.RegisterCron("retry_msgs", false, NewRetryPendingCron())
+	tasks.RegisterCron("retry_msgs", NewRetryPendingCron())
 }
 
 type RetryPendingCron struct {
@@ -33,6 +30,10 @@ func (c *RetryPendingCron) Next(last time.Time) time.Time {
 	return tasks.CronNext(last, time.Minute*5)
 }
 
+func (c *RetryPendingCron) AllInstances() bool {
+	return false
+}
+
 // looks for any pending msgs older than five minutes and queues them to be handled again
 func (c *RetryPendingCron) Run(ctx context.Context, rt *runtime.Runtime) (map[string]any, error) {
 	if !rt.Config.RetryPendingMessages {
@@ -45,9 +46,9 @@ func (c *RetryPendingCron) Run(ctx context.Context, rt *runtime.Runtime) (map[st
 	defer rc.Close()
 
 	// check the size of our handle queue
-	handlerSize, err := queue.Size(rc, queue.HandlerQueue)
+	handlerSize, err := tasks.HandlerQueue.Size(rc)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error finding size of handler queue")
+		return nil, fmt.Errorf("error finding size of handler queue: %w", err)
 	}
 
 	// if our queue has items in it, don't queue anything else in there, wait for it to be empty
@@ -59,7 +60,7 @@ func (c *RetryPendingCron) Run(ctx context.Context, rt *runtime.Runtime) (map[st
 	// get all incoming messages that are still empty
 	rows, err := rt.DB.Queryx(unhandledMsgsQuery)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error querying for unhandled messages")
+		return nil, fmt.Errorf("error querying for unhandled messages: %w", err)
 	}
 	defer rows.Close()
 
@@ -67,12 +68,12 @@ func (c *RetryPendingCron) Run(ctx context.Context, rt *runtime.Runtime) (map[st
 	for rows.Next() {
 		var orgID models.OrgID
 		var contactID models.ContactID
-		var eventJSON string
+		var eventJSON []byte
 		var msgID models.MsgID
 
 		err = rows.Scan(&orgID, &contactID, &msgID, &eventJSON)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error scanning msg row")
+			return nil, fmt.Errorf("error scanning msg row: %w", err)
 		}
 
 		// our key is built such that we will only retry once an hour
@@ -80,7 +81,7 @@ func (c *RetryPendingCron) Run(ctx context.Context, rt *runtime.Runtime) (map[st
 
 		dupe, err := c.marker.IsMember(rc, key)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error checking for dupe retry")
+			return nil, fmt.Errorf("error checking for dupe retry: %w", err)
 		}
 
 		// we already retried this, skip
@@ -88,23 +89,21 @@ func (c *RetryPendingCron) Run(ctx context.Context, rt *runtime.Runtime) (map[st
 			continue
 		}
 
-		task := &queue.Task{
-			Type:     MsgEventType,
-			OrgID:    int(orgID),
-			Task:     json.RawMessage(eventJSON),
-			QueuedOn: time.Now(),
+		task, err := readTask("msg_event", eventJSON) // TODO find a better way to do this
+		if err != nil {
+			return nil, fmt.Errorf("error reading msg data as task: %w", err)
 		}
 
 		// queue this event up for handling
-		err = QueueHandleTask(rc, contactID, task)
+		err = QueueTask(rc, orgID, contactID, task)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error queuing retry for task")
+			return nil, fmt.Errorf("error queuing retry for task: %w", err)
 		}
 
 		// mark it as queued
 		err = c.marker.Add(rc, key)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error marking task for retry")
+			return nil, fmt.Errorf("error marking task for retry: %w", err)
 		}
 
 		retried++

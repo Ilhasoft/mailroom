@@ -1,27 +1,47 @@
 package web
 
 import (
-	"github.com/nyaruka/goflow/utils"
+	"errors"
+	"net/http"
 
-	"github.com/pkg/errors"
+	"github.com/nyaruka/goflow/contactql"
+	"github.com/nyaruka/mailroom/core/goflow"
+	"github.com/nyaruka/mailroom/core/models"
 )
 
 // ErrorResponse is the type for our error responses
 type ErrorResponse struct {
-	Error string            `json:"error"`
-	Code  string            `json:"code,omitempty"`
-	Extra map[string]string `json:"extra,omitempty"`
+	Error string         `json:"error"`
+	Code  string         `json:"code,omitempty"`
+	Extra map[string]any `json:"extra,omitempty"`
 }
 
-// NewErrorResponse creates a new error response from the passed in error
-func NewErrorResponse(err error) *ErrorResponse {
-	rich, isRich := errors.Cause(err).(utils.RichError)
-	if isRich {
+func ErrorToResponse(err error) (*ErrorResponse, int) {
+	var qerr *contactql.QueryError
+	if errors.As(err, &qerr) {
 		return &ErrorResponse{
-			Error: rich.Error(),
-			Code:  rich.Code(),
-			Extra: rich.Extra(),
-		}
+			Error: qerr.Error(),
+			Code:  "query:" + qerr.Code(),
+			Extra: qerr.Extra(),
+		}, http.StatusUnprocessableEntity
 	}
-	return &ErrorResponse{Error: err.Error()}
+
+	var uerr *models.URNError
+	if errors.As(err, &uerr) {
+		return &ErrorResponse{
+			Error: uerr.Error(),
+			Code:  "urn:" + uerr.Code,
+			Extra: map[string]any{"index": uerr.Index},
+		}, http.StatusUnprocessableEntity
+	}
+
+	var ferr *goflow.FlowDefError
+	if errors.As(err, &ferr) {
+		return &ErrorResponse{
+			Error: ferr.Error(),
+			Code:  "flow:invalid",
+		}, http.StatusUnprocessableEntity
+	}
+
+	return &ErrorResponse{Error: err.Error()}, http.StatusInternalServerError
 }

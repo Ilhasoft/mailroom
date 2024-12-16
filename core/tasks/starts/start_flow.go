@@ -2,18 +2,18 @@ package starts
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/nyaruka/gocommon/i18n"
 	"github.com/nyaruka/goflow/contactql"
 	"github.com/nyaruka/mailroom/core/models"
-	"github.com/nyaruka/mailroom/core/queue"
 	"github.com/nyaruka/mailroom/core/search"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/core/tasks/ivr"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
+	"github.com/nyaruka/mailroom/utils/queues"
 )
 
 const (
@@ -40,8 +40,12 @@ func (t *StartFlowTask) Timeout() time.Duration {
 	return time.Minute * 60
 }
 
-func (t *StartFlowTask) Perform(ctx context.Context, rt *runtime.Runtime, orgID models.OrgID) error {
-	if err := createFlowStartBatches(ctx, rt, t.FlowStart); err != nil {
+func (t *StartFlowTask) WithAssets() models.Refresh {
+	return models.RefreshNone
+}
+
+func (t *StartFlowTask) Perform(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets) error {
+	if err := createFlowStartBatches(ctx, rt, oa, t.FlowStart); err != nil {
 		models.MarkStartFailed(ctx, rt.DB, t.FlowStart.ID)
 
 		// if error is user created query error.. don't escalate error to sentry
@@ -55,24 +59,19 @@ func (t *StartFlowTask) Perform(ctx context.Context, rt *runtime.Runtime, orgID 
 }
 
 // creates batches of flow starts for all the unique contacts
-func createFlowStartBatches(ctx context.Context, rt *runtime.Runtime, start *models.FlowStart) error {
-	oa, err := models.GetOrgAssets(ctx, rt, start.OrgID)
-	if err != nil {
-		return errors.Wrap(err, "error loading org assets")
-	}
-
+func createFlowStartBatches(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, start *models.FlowStart) error {
 	flow, err := oa.FlowByID(start.FlowID)
 	if err != nil {
-		return errors.Wrap(err, "error loading flow")
+		return fmt.Errorf("error loading flow: %w", err)
 	}
 
 	var contactIDs []models.ContactID
 
 	if start.CreateContact {
 		// if we are meant to create a new contact, do so
-		contact, _, err := models.CreateContact(ctx, rt.DB, oa, models.NilUserID, "", i18n.NilLanguage, nil)
+		contact, _, err := models.CreateContact(ctx, rt.DB, oa, models.NilUserID, "", i18n.NilLanguage, models.ContactStatusActive, nil)
 		if err != nil {
-			return errors.Wrapf(err, "error creating new contact")
+			return fmt.Errorf("error creating new contact: %w", err)
 		}
 		contactIDs = []models.ContactID{contact.ID()}
 	} else {
@@ -93,21 +92,21 @@ func createFlowStartBatches(ctx context.Context, rt *runtime.Runtime, start *mod
 			ExcludeGroupIDs: start.ExcludeGroupIDs,
 		}, limit)
 		if err != nil {
-			return errors.Wrap(err, "error resolving start recipients")
+			return fmt.Errorf("error resolving start recipients: %w", err)
 		}
 	}
 
 	// mark our start as starting, last task will mark as complete
 	err = models.MarkStartStarted(ctx, rt.DB, start.ID, len(contactIDs))
 	if err != nil {
-		return errors.Wrapf(err, "error marking start as started")
+		return fmt.Errorf("error marking start as started: %w", err)
 	}
 
 	// if there are no contacts to start, mark our start as complete, we are done
 	if len(contactIDs) == 0 {
 		err = models.MarkStartComplete(ctx, rt.DB, start.ID)
 		if err != nil {
-			return errors.Wrapf(err, "error marking start as complete")
+			return fmt.Errorf("error marking start as complete: %w", err)
 		}
 		return nil
 	}
@@ -116,15 +115,15 @@ func createFlowStartBatches(ctx context.Context, rt *runtime.Runtime, start *mod
 	idBatches := models.ChunkSlice(contactIDs, startBatchSize)
 
 	// by default we start in the batch queue unless we have two or fewer contacts
-	q := queue.BatchQueue
+	q := tasks.BatchQueue
 	if len(contactIDs) <= 2 {
-		q = queue.HandlerQueue
+		q = tasks.HandlerQueue
 	}
 
 	// if this is a big multi batch blast, give it low priority
-	priority := queue.DefaultPriority
+	priority := queues.DefaultPriority
 	if len(idBatches) > 1 {
-		priority = queue.LowPriority
+		priority = queues.LowPriority
 	}
 
 	rc := rt.RP.Get()
@@ -146,7 +145,7 @@ func createFlowStartBatches(ctx context.Context, rt *runtime.Runtime, start *mod
 		err = tasks.Queue(rc, q, start.OrgID, batchTask, priority)
 		if err != nil {
 			if i == 0 {
-				return errors.Wrap(err, "error queuing flow start batch")
+				return fmt.Errorf("error queuing flow start batch: %w", err)
 			}
 			// if we've already queued other batches.. we don't want to error and have the task be retried
 			slog.Error("error queuing flow start batch", "error", err)

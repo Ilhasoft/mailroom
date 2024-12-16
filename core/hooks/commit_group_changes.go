@@ -2,12 +2,12 @@ package hooks
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/pkg/errors"
 )
 
 // CommitGroupChangesHook is our hook for all group changes
@@ -53,12 +53,12 @@ func (h *commitGroupChangesHook) Apply(ctx context.Context, rt *runtime.Runtime,
 	// do our updates
 	err := models.AddContactsToGroups(ctx, tx, adds)
 	if err != nil {
-		return errors.Wrapf(err, "error adding contacts to groups")
+		return fmt.Errorf("error adding contacts to groups: %w", err)
 	}
 
 	err = models.RemoveContactsFromGroups(ctx, tx, removes)
 	if err != nil {
-		return errors.Wrapf(err, "error removing contacts from groups")
+		return fmt.Errorf("error removing contacts from groups: %w", err)
 	}
 
 	return nil

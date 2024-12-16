@@ -85,3 +85,45 @@ func TestChannels(t *testing.T) {
 		assert.Equal(t, tc.AllowInternational, channel.AllowInternational())
 	}
 }
+
+func TestGetChannelByID(t *testing.T) {
+	ctx, rt := testsuite.Runtime()
+
+	defer testsuite.Reset(testsuite.ResetAll)
+
+	ch, err := models.GetChannelByID(ctx, rt.DB.DB, testdata.TwilioChannel.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, testdata.TwilioChannel.ID, ch.ID())
+	assert.Equal(t, testdata.TwilioChannel.UUID, ch.UUID())
+
+	_, err = models.GetChannelByID(ctx, rt.DB.DB, 1234567890)
+	assert.EqualError(t, err, "error fetching channel by id 1234567890: error scanning row JSON: sql: no rows in result set")
+
+}
+
+func TestGetAndroidChannelsToSync(t *testing.T) {
+	ctx, rt := testsuite.Runtime()
+
+	defer testsuite.Reset(testsuite.ResetData)
+
+	testChannel1 := testdata.InsertChannel(rt, testdata.Org1, "A", "Android 1", "123", []string{"tel"}, "SR", map[string]any{"FCM_ID": ""})
+	testChannel2 := testdata.InsertChannel(rt, testdata.Org1, "A", "Android 2", "234", []string{"tel"}, "SR", map[string]any{"FCM_ID": "FCMID2"})
+	testChannel3 := testdata.InsertChannel(rt, testdata.Org1, "A", "Android 3", "456", []string{"tel"}, "SR", map[string]any{"FCM_ID": "FCMID3"})
+	testChannel4 := testdata.InsertChannel(rt, testdata.Org1, "A", "Android 4", "567", []string{"tel"}, "SR", map[string]any{"FCM_ID": "FCMID4"})
+	testChannel5 := testdata.InsertChannel(rt, testdata.Org1, "A", "Android 5", "678", []string{"tel"}, "SR", map[string]any{"FCM_ID": "FCMID5"})
+
+	rt.DB.MustExec(`UPDATE channels_channel SET last_seen = NOW() - INTERVAL '30 minutes' WHERE id = $1`, testChannel1.ID)
+	rt.DB.MustExec(`UPDATE channels_channel SET last_seen = NOW() - INTERVAL '30 minutes' WHERE id = $1`, testChannel2.ID)
+	rt.DB.MustExec(`UPDATE channels_channel SET last_seen = NOW() WHERE id = $1`, testChannel3.ID)
+	rt.DB.MustExec(`UPDATE channels_channel SET last_seen = NOW() - INTERVAL '20 minutes' WHERE id = $1`, testChannel4.ID)
+	rt.DB.MustExec(`UPDATE channels_channel SET last_seen = NOW() - INTERVAL '10 days' WHERE id = $1`, testChannel5.ID)
+
+	oldSeenAndroidChannels, err := models.GetAndroidChannelsToSync(ctx, rt.DB)
+	assert.NoError(t, err)
+	assert.Equal(t, 3, len(oldSeenAndroidChannels))
+
+	assert.Equal(t, testChannel4.ID, oldSeenAndroidChannels[0].ID())
+	assert.Equal(t, testChannel2.ID, oldSeenAndroidChannels[1].ID())
+	assert.Equal(t, testChannel1.ID, oldSeenAndroidChannels[2].ID())
+
+}

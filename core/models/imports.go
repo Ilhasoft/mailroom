@@ -18,7 +18,6 @@ import (
 	"github.com/nyaruka/goflow/flows/modifiers"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/null/v3"
-	"github.com/pkg/errors"
 )
 
 // ContactImportID is the type for contact import IDs
@@ -66,7 +65,7 @@ func LoadContactImport(ctx context.Context, db DBorTx, id ContactImportID) (*Con
 	i := &ContactImport{}
 	err := db.GetContext(ctx, i, sqlLoadContactImport, id)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error loading contact import id=%d", id)
+		return nil, fmt.Errorf("error loading contact import id=%d: %w", id, err)
 	}
 	return i, nil
 }
@@ -82,7 +81,10 @@ func (i *ContactImport) MarkFinished(ctx context.Context, db DBorTx, status Cont
 	i.FinishedOn = &now
 
 	_, err := db.ExecContext(ctx, sqlMarkContactImportFinished, i.ID, i.Status, i.FinishedOn)
-	return errors.Wrap(err, "error marking import as finished")
+	if err != nil {
+		return fmt.Errorf("error marking import as finished: %w", err)
+	}
+	return nil
 }
 
 // ContactImportBatch is a batch of contacts within a larger import
@@ -105,9 +107,9 @@ type ContactImportBatch struct {
 }
 
 // Import does the actual import of this batch
-func (b *ContactImportBatch) Import(ctx context.Context, rt *runtime.Runtime, orgID OrgID, userID UserID) error {
+func (b *ContactImportBatch) Import(ctx context.Context, rt *runtime.Runtime, oa *OrgAssets, userID UserID) error {
 	// if any error occurs this batch should be marked as failed
-	if err := b.tryImport(ctx, rt, orgID, userID); err != nil {
+	if err := b.tryImport(ctx, rt, oa, userID); err != nil {
 		b.markFailed(ctx, rt.DB)
 		return err
 	}
@@ -125,21 +127,15 @@ type importContact struct {
 	errors      []string
 }
 
-func (b *ContactImportBatch) tryImport(ctx context.Context, rt *runtime.Runtime, orgID OrgID, userID UserID) error {
+func (b *ContactImportBatch) tryImport(ctx context.Context, rt *runtime.Runtime, oa *OrgAssets, userID UserID) error {
 	if err := b.markProcessing(ctx, rt.DB); err != nil {
-		return errors.Wrap(err, "error marking as processing")
-	}
-
-	// grab our org assets
-	oa, err := GetOrgAssetsWithRefresh(ctx, rt, orgID, RefreshFields|RefreshGroups)
-	if err != nil {
-		return errors.Wrap(err, "error loading org assets")
+		return fmt.Errorf("error marking as processing: %w", err)
 	}
 
 	// unmarshal this batch's specs
 	var specs []*ContactSpec
 	if err := jsonx.Unmarshal(b.Specs, &specs); err != nil {
-		return errors.Wrap(err, "error unmarsaling specs")
+		return fmt.Errorf("error unmarsaling specs: %w", err)
 	}
 
 	// create our work data for each contact being created or updated
@@ -149,7 +145,7 @@ func (b *ContactImportBatch) tryImport(ctx context.Context, rt *runtime.Runtime,
 	}
 
 	if err := b.getOrCreateContacts(ctx, rt.DB, oa, imports); err != nil {
-		return errors.Wrap(err, "error getting and creating contacts")
+		return fmt.Errorf("error getting and creating contacts: %w", err)
 	}
 
 	// gather up contacts and modifiers
@@ -162,13 +158,13 @@ func (b *ContactImportBatch) tryImport(ctx context.Context, rt *runtime.Runtime,
 	}
 
 	// and apply in bulk
-	_, err = ApplyModifiers(ctx, rt, oa, userID, modifiersByContact)
+	_, err := ApplyModifiers(ctx, rt, oa, userID, modifiersByContact)
 	if err != nil {
-		return errors.Wrap(err, "error applying modifiers")
+		return fmt.Errorf("error applying modifiers: %w", err)
 	}
 
 	if err := b.markComplete(ctx, rt.DB, imports); err != nil {
-		return errors.Wrap(err, "unable to mark as complete")
+		return fmt.Errorf("unable to mark as complete: %w", err)
 	}
 
 	return nil
@@ -181,7 +177,7 @@ func (b *ContactImportBatch) getOrCreateContacts(ctx context.Context, db *sqlx.D
 	// build map of UUIDs to contacts
 	contactsByUUID, err := b.loadContactsByUUID(ctx, db, oa, imports)
 	if err != nil {
-		return errors.Wrap(err, "error loading contacts by UUID")
+		return fmt.Errorf("error loading contacts by UUID: %w", err)
 	}
 
 	for _, imp := range imports {
@@ -201,7 +197,7 @@ func (b *ContactImportBatch) getOrCreateContacts(ctx context.Context, db *sqlx.D
 
 			imp.flowContact, err = imp.contact.FlowContact(oa)
 			if err != nil {
-				return errors.Wrapf(err, "error creating flow contact for %d", imp.contact.ID())
+				return fmt.Errorf("error creating flow contact for %d: %w", imp.contact.ID(), err)
 			}
 
 		} else {
@@ -312,7 +308,7 @@ func (b *ContactImportBatch) markComplete(ctx context.Context, db DBorTx, import
 
 	errorsJSON, err := jsonx.Marshal(importErrors)
 	if err != nil {
-		return errors.Wrap(err, "error marshaling errors")
+		return fmt.Errorf("error marshaling errors: %w", err)
 	}
 
 	now := dates.Now()

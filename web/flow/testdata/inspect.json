@@ -287,7 +287,8 @@
         },
         "status": 422,
         "response": {
-            "error": "unable to read flow: invalid node[uuid=6fde1a09-3997-47dd-aff0-92e8aff3a642]: destination 55fbef81-4151-4589-9f0a-8e5c44f6b5a3 of exit[uuid=d3f3f024-a90e-43a5-bd5a-7056f5bea699] isn't a known node"
+            "error": "invalid node[uuid=6fde1a09-3997-47dd-aff0-92e8aff3a642]: destination 55fbef81-4151-4589-9f0a-8e5c44f6b5a3 of exit[uuid=d3f3f024-a90e-43a5-bd5a-7056f5bea699] isn't a known node",
+            "code": "flow:invalid"
         }
     },
     {
@@ -349,7 +350,7 @@
             "flow": {
                 "uuid": "8f107d42-7416-4cf2-9a51-9490361ad517",
                 "name": "Invalid Flow",
-                "spec_version": "13.2.0",
+                "spec_version": "13.5.0",
                 "language": "base",
                 "type": "messaging",
                 "revision": 1,
@@ -360,7 +361,8 @@
         },
         "status": 422,
         "response": {
-            "error": "unable to read flow: field 'language' is not a valid language code"
+            "error": "field 'language' is not a valid language code",
+            "code": "flow:invalid"
         }
     }
 ]

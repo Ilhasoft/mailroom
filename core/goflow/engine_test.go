@@ -17,7 +17,7 @@ import (
 func TestEngineWebhook(t *testing.T) {
 	_, rt := testsuite.Runtime()
 
-	svc, err := goflow.Engine(rt.Config).Services().Webhook(nil)
+	svc, err := goflow.Engine(rt).Services().Webhook(nil)
 	assert.NoError(t, err)
 
 	defer httpx.SetRequestor(httpx.DefaultRequestor)
@@ -37,9 +37,9 @@ func TestEngineWebhook(t *testing.T) {
 }
 
 func TestSimulatorAirtime(t *testing.T) {
-	_, rt := testsuite.Runtime()
+	ctx, rt := testsuite.Runtime()
 
-	svc, err := goflow.Simulator(rt.Config).Services().Airtime(nil)
+	svc, err := goflow.Simulator(ctx, rt).Services().Airtime(nil)
 	assert.NoError(t, err)
 
 	amounts := map[string]decimal.Decimal{"USD": decimal.RequireFromString(`1.50`)}
@@ -57,9 +57,9 @@ func TestSimulatorAirtime(t *testing.T) {
 }
 
 func TestSimulatorWebhook(t *testing.T) {
-	_, rt := testsuite.Runtime()
+	ctx, rt := testsuite.Runtime()
 
-	svc, err := goflow.Simulator(rt.Config).Services().Webhook(nil)
+	svc, err := goflow.Simulator(ctx, rt).Services().Webhook(nil)
 	assert.NoError(t, err)
 
 	defer httpx.SetRequestor(httpx.DefaultRequestor)

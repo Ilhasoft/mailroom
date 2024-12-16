@@ -2,16 +2,16 @@ package msgs
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/nyaruka/goflow/contactql"
 	"github.com/nyaruka/mailroom/core/models"
-	"github.com/nyaruka/mailroom/core/queue"
 	"github.com/nyaruka/mailroom/core/search"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
+	"github.com/nyaruka/mailroom/utils/queues"
 )
 
 const (
@@ -39,9 +39,13 @@ func (t *SendBroadcastTask) Timeout() time.Duration {
 	return time.Minute * 60
 }
 
+func (t *SendBroadcastTask) WithAssets() models.Refresh {
+	return models.RefreshNone
+}
+
 // Perform handles sending the broadcast by creating batches of broadcast sends for all the unique contacts
-func (t *SendBroadcastTask) Perform(ctx context.Context, rt *runtime.Runtime, orgID models.OrgID) error {
-	if err := createBroadcastBatches(ctx, rt, t.Broadcast); err != nil {
+func (t *SendBroadcastTask) Perform(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets) error {
+	if err := createBroadcastBatches(ctx, rt, oa, t.Broadcast); err != nil {
 		if t.Broadcast.ID != models.NilBroadcastID {
 			models.MarkBroadcastFailed(ctx, rt.DB, t.Broadcast.ID)
 		}
@@ -56,21 +60,27 @@ func (t *SendBroadcastTask) Perform(ctx context.Context, rt *runtime.Runtime, or
 	return nil
 }
 
-func createBroadcastBatches(ctx context.Context, rt *runtime.Runtime, bcast *models.Broadcast) error {
-	oa, err := models.GetOrgAssets(ctx, rt, bcast.OrgID)
-	if err != nil {
-		return errors.Wrapf(err, "error getting org assets")
-	}
-
+func createBroadcastBatches(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, bcast *models.Broadcast) error {
 	contactIDs, err := search.ResolveRecipients(ctx, rt, oa, nil, &search.Recipients{
 		ContactIDs:      bcast.ContactIDs,
 		GroupIDs:        bcast.GroupIDs,
 		URNs:            bcast.URNs,
 		Query:           string(bcast.Query),
+		Exclusions:      bcast.Exclusions,
 		ExcludeGroupIDs: nil,
 	}, -1)
 	if err != nil {
-		return errors.Wrap(err, "error resolving broadcast recipients")
+		return fmt.Errorf("error resolving broadcast recipients: %w", err)
+	}
+
+	// if a node is specified, add all the contacts at that node
+	if bcast.NodeUUID != "" {
+		nodeContactIDs, err := models.GetContactIDsAtNode(ctx, rt, oa.OrgID(), bcast.NodeUUID)
+		if err != nil {
+			return fmt.Errorf("error getting contacts at node %s: %w", bcast.NodeUUID, err)
+		}
+
+		contactIDs = append(contactIDs, nodeContactIDs...)
 	}
 
 	// if there are no contacts to send to, mark our broadcast as sent, we are done
@@ -78,16 +88,16 @@ func createBroadcastBatches(ctx context.Context, rt *runtime.Runtime, bcast *mod
 		if bcast.ID != models.NilBroadcastID {
 			err = models.MarkBroadcastSent(ctx, rt.DB, bcast.ID)
 			if err != nil {
-				return errors.Wrapf(err, "error marking broadcast as sent")
+				return fmt.Errorf("error marking broadcast as sent: %w", err)
 			}
 		}
 		return nil
 	}
 
 	// two or fewer contacts? queue to our handler queue for sending
-	q := queue.BatchQueue
+	q := tasks.BatchQueue
 	if len(contactIDs) <= 2 {
-		q = queue.HandlerQueue
+		q = tasks.HandlerQueue
 	}
 
 	rc := rt.RP.Get()
@@ -99,10 +109,10 @@ func createBroadcastBatches(ctx context.Context, rt *runtime.Runtime, bcast *mod
 		isLast := (i == len(idBatches)-1)
 
 		batch := bcast.CreateBatch(idBatch, isLast)
-		err = tasks.Queue(rc, q, bcast.OrgID, &SendBroadcastBatchTask{BroadcastBatch: batch}, queue.DefaultPriority)
+		err = tasks.Queue(rc, q, bcast.OrgID, &SendBroadcastBatchTask{BroadcastBatch: batch}, queues.DefaultPriority)
 		if err != nil {
 			if i == 0 {
-				return errors.Wrap(err, "error queuing broadcast batch")
+				return fmt.Errorf("error queuing broadcast batch: %w", err)
 			}
 			// if we've already queued other batches.. we don't want to error and have the task be retried
 			slog.Error("error queuing broadcast batch", "error", err)

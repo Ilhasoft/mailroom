@@ -2,14 +2,13 @@ package hooks
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/nyaruka/gocommon/jsonx"
 	"github.com/nyaruka/goflow/flows/events"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
-
-	"github.com/jmoiron/sqlx"
-	"github.com/pkg/errors"
 )
 
 // InsertStartHook is our hook to fire insert our starts
@@ -32,7 +31,7 @@ func (h *insertStartHook) Apply(ctx context.Context, rt *runtime.Runtime, tx *sq
 			// look up our flow
 			f, err := oa.FlowByUUID(event.Flow.UUID)
 			if err != nil {
-				return errors.Wrapf(err, "unable to load flow with UUID: %s", event.Flow.UUID)
+				return fmt.Errorf("unable to load flow with UUID: %s: %w", event.Flow.UUID, err)
 			}
 			flow := f.(*models.Flow)
 
@@ -48,12 +47,12 @@ func (h *insertStartHook) Apply(ctx context.Context, rt *runtime.Runtime, tx *sq
 			// load our contacts by uuid
 			contactIDs, err := models.GetContactIDsFromReferences(ctx, tx, oa.OrgID(), event.Contacts)
 			if err != nil {
-				return errors.Wrapf(err, "error loading contacts by reference")
+				return fmt.Errorf("error loading contacts by reference: %w", err)
 			}
 
 			historyJSON, err := jsonx.Marshal(event.History)
 			if err != nil {
-				return errors.Wrapf(err, "error marshaling session history")
+				return fmt.Errorf("error marshaling session history: %w", err)
 			}
 
 			// create our start
@@ -77,7 +76,7 @@ func (h *insertStartHook) Apply(ctx context.Context, rt *runtime.Runtime, tx *sq
 	// insert all our starts
 	err := models.InsertFlowStarts(ctx, tx, starts)
 	if err != nil {
-		return errors.Wrapf(err, "error inserting flow starts for scene triggers")
+		return fmt.Errorf("error inserting flow starts for scene triggers: %w", err)
 	}
 
 	return nil

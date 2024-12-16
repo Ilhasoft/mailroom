@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/nyaruka/gocommon/urns"
+	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/null/v3"
 	"github.com/shopspring/decimal"
 )
@@ -30,26 +31,30 @@ const (
 // AirtimeTransfer is our type for an airtime transfer
 type AirtimeTransfer struct {
 	t struct {
-		ID            AirtimeTransferID     `db:"id"`
-		OrgID         OrgID                 `db:"org_id"`
-		Status        AirtimeTransferStatus `db:"status"`
-		ContactID     ContactID             `db:"contact_id"`
-		Sender        null.String           `db:"sender"`
-		Recipient     urns.URN              `db:"recipient"`
-		Currency      null.String           `db:"currency"`
-		DesiredAmount decimal.Decimal       `db:"desired_amount"`
-		ActualAmount  decimal.Decimal       `db:"actual_amount"`
-		CreatedOn     time.Time             `db:"created_on"`
+		ID            AirtimeTransferID         `db:"id"`
+		UUID          flows.AirtimeTransferUUID `db:"uuid"`
+		OrgID         OrgID                     `db:"org_id"`
+		Status        AirtimeTransferStatus     `db:"status"`
+		ExternalID    null.String               `db:"external_id"`
+		ContactID     ContactID                 `db:"contact_id"`
+		Sender        null.String               `db:"sender"`
+		Recipient     urns.URN                  `db:"recipient"`
+		Currency      null.String               `db:"currency"`
+		DesiredAmount decimal.Decimal           `db:"desired_amount"`
+		ActualAmount  decimal.Decimal           `db:"actual_amount"`
+		CreatedOn     time.Time                 `db:"created_on"`
 	}
 
 	Logs []*HTTPLog
 }
 
 // NewAirtimeTransfer creates a new airtime transfer returning the result
-func NewAirtimeTransfer(orgID OrgID, status AirtimeTransferStatus, contactID ContactID, sender urns.URN, recipient urns.URN, currency string, desiredAmount decimal.Decimal, actualAmount decimal.Decimal, createdOn time.Time) *AirtimeTransfer {
+func NewAirtimeTransfer(uuid flows.AirtimeTransferUUID, orgID OrgID, status AirtimeTransferStatus, externalID string, contactID ContactID, sender urns.URN, recipient urns.URN, currency string, desiredAmount decimal.Decimal, actualAmount decimal.Decimal, createdOn time.Time) *AirtimeTransfer {
 	t := &AirtimeTransfer{}
+	t.t.UUID = uuid
 	t.t.OrgID = orgID
 	t.t.Status = status
+	t.t.ExternalID = null.String(externalID)
 	t.t.ContactID = contactID
 	t.t.Sender = null.String(string(sender))
 	t.t.Recipient = recipient
@@ -69,8 +74,8 @@ func (t *AirtimeTransfer) AddLog(l *HTTPLog) {
 }
 
 const sqlInsertAirtimeTransfers = `
-INSERT INTO airtime_airtimetransfer(org_id,  status,  contact_id,  sender,  recipient,  currency,  desired_amount,  actual_amount,  created_on)
-					        VALUES(:org_id, :status, :contact_id, :sender, :recipient, :currency, :desired_amount, :actual_amount, :created_on)
+INSERT INTO airtime_airtimetransfer(uuid,  org_id,  status,  external_id,  contact_id,  sender,  recipient,  currency,  desired_amount,  actual_amount,  created_on)
+					        VALUES(:uuid, :org_id, :status, :external_id, :contact_id, :sender, :recipient, :currency, :desired_amount, :actual_amount, :created_on)
 RETURNING id
 `
 

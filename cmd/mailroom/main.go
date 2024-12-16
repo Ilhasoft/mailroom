@@ -11,7 +11,6 @@ import (
 
 	"github.com/getsentry/sentry-go"
 	_ "github.com/lib/pq"
-	"github.com/nyaruka/ezconf"
 	"github.com/nyaruka/gocommon/uuids"
 	"github.com/nyaruka/mailroom"
 	"github.com/nyaruka/mailroom/runtime"
@@ -25,6 +24,7 @@ import (
 	_ "github.com/nyaruka/mailroom/core/tasks/contacts"
 	_ "github.com/nyaruka/mailroom/core/tasks/expirations"
 	_ "github.com/nyaruka/mailroom/core/tasks/handler"
+	_ "github.com/nyaruka/mailroom/core/tasks/handler/ctasks"
 	_ "github.com/nyaruka/mailroom/core/tasks/incidents"
 	_ "github.com/nyaruka/mailroom/core/tasks/interrupts"
 	_ "github.com/nyaruka/mailroom/core/tasks/ivr"
@@ -34,6 +34,7 @@ import (
 	_ "github.com/nyaruka/mailroom/core/tasks/timeouts"
 	_ "github.com/nyaruka/mailroom/services/ivr/twiml"
 	_ "github.com/nyaruka/mailroom/services/ivr/vonage"
+	_ "github.com/nyaruka/mailroom/web/android"
 	_ "github.com/nyaruka/mailroom/web/contact"
 	_ "github.com/nyaruka/mailroom/web/docs"
 	_ "github.com/nyaruka/mailroom/web/flow"
@@ -42,7 +43,6 @@ import (
 	_ "github.com/nyaruka/mailroom/web/org"
 	_ "github.com/nyaruka/mailroom/web/po"
 	_ "github.com/nyaruka/mailroom/web/simulation"
-	_ "github.com/nyaruka/mailroom/web/surveyor"
 	_ "github.com/nyaruka/mailroom/web/ticket"
 )
 
@@ -53,67 +53,43 @@ var (
 )
 
 func main() {
-	config := runtime.NewDefaultConfig()
+	config := runtime.LoadConfig()
 	config.Version = version
-	loader := ezconf.NewLoader(
-		config,
-		"mailroom", "Mailroom - flow event handler for RapidPro",
-		[]string{"mailroom.toml"},
-	)
-	loader.MustLoad()
-
-	// ensure config is valid
-	if err := config.Validate(); err != nil {
-		slog.Error("invalid config", "error", err)
-		os.Exit(1)
-	}
-
-	var level slog.Level
-	err := level.UnmarshalText([]byte(config.LogLevel))
-	if err != nil {
-		ulog.Fatalf("invalid log level %s", level)
-		os.Exit(1)
-	}
 
 	// configure our logger
-	logHandler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})
+	logHandler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: config.LogLevel})
 	slog.SetDefault(slog.New(logHandler))
-
-	logger := slog.With("comp", "main")
-	logger.Info("starting mailroom", "version", version, "released", date)
 
 	// if we have a DSN entry, try to initialize it
 	if config.SentryDSN != "" {
-		err := sentry.Init(sentry.ClientOptions{
-			Dsn:           config.SentryDSN,
-			EnableTracing: false,
-		})
+		err := sentry.Init(sentry.ClientOptions{Dsn: config.SentryDSN, EnableTracing: false})
 		if err != nil {
 			ulog.Fatalf("error initiating sentry client, error %s, dsn %s", err, config.SentryDSN)
-			os.Exit(1)
 		}
 
 		defer sentry.Flush(2 * time.Second)
 
-		logger = slog.New(
+		slog.SetDefault(slog.New(
 			slogmulti.Fanout(
 				logHandler,
 				slogsentry.Option{Level: slog.LevelError}.NewSentryHandler(),
 			),
-		)
-		logger = logger.With("release", version)
-		slog.SetDefault(logger)
+		))
 	}
+
+	log := slog.With("comp", "main")
+	log.Info("starting mailroom", "version", version, "released", date)
 
 	if config.UUIDSeed != 0 {
 		uuids.SetGenerator(uuids.NewSeededGenerator(int64(config.UUIDSeed)))
-		logger.Warn("using seeded UUID generation", "uuid-seed", config.UUIDSeed)
+		log.Warn("using seeded UUID generation", "uuid-seed", config.UUIDSeed)
 	}
 
 	mr := mailroom.NewMailroom(config)
-	err = mr.Start()
+	err := mr.Start()
 	if err != nil {
-		logger.Error("unable to start server", "error", err)
+		log.Error("unable to start server", "error", err)
+		os.Exit(1)
 	}
 
 	// handle our signals

@@ -1,12 +1,6 @@
 package contact_test
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"sync"
 	"testing"
 	"time"
 
@@ -18,7 +12,6 @@ import (
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/testsuite"
 	"github.com/nyaruka/mailroom/testsuite/testdata"
-	"github.com/nyaruka/mailroom/web"
 	"github.com/nyaruka/mailroom/web/contact"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,14 +30,16 @@ func TestCreate(t *testing.T) {
 	testsuite.RunWebTests(t, ctx, rt, "testdata/create.json", nil)
 }
 
-func TestBulkCreate(t *testing.T) {
+func TestExport(t *testing.T) {
 	ctx, rt := testsuite.Runtime()
 
-	defer testsuite.Reset(testsuite.ResetData)
+	testsuite.RunWebTests(t, ctx, rt, "testdata/export.json", nil)
+}
 
-	rt.DB.MustExec(`ALTER SEQUENCE contacts_contact_id_seq RESTART WITH 30000`)
+func TestExportPreview(t *testing.T) {
+	ctx, rt := testsuite.Runtime()
 
-	testsuite.RunWebTests(t, ctx, rt, "testdata/bulk_create.json", nil)
+	testsuite.RunWebTests(t, ctx, rt, "testdata/export_preview.json", nil)
 }
 
 func TestInspect(t *testing.T) {
@@ -86,19 +81,6 @@ func TestModify(t *testing.T) {
 	testsuite.RunWebTests(t, ctx, rt, "testdata/modify.json", nil)
 }
 
-func TestResolve(t *testing.T) {
-	ctx, rt := testsuite.Runtime()
-
-	defer testsuite.Reset(testsuite.ResetAll)
-
-	// detach Cathy's tel URN
-	rt.DB.MustExec(`UPDATE contacts_contacturn SET contact_id = NULL WHERE contact_id = $1`, testdata.Cathy.ID)
-
-	rt.DB.MustExec(`ALTER SEQUENCE contacts_contact_id_seq RESTART WITH 30000`)
-
-	testsuite.RunWebTests(t, ctx, rt, "testdata/resolve.json", nil)
-}
-
 func TestInterrupt(t *testing.T) {
 	ctx, rt := testsuite.Runtime()
 
@@ -114,153 +96,24 @@ func TestInterrupt(t *testing.T) {
 	testsuite.RunWebTests(t, ctx, rt, "testdata/interrupt.json", nil)
 }
 
-func TestSearch(t *testing.T) {
-	ctx, rt := testsuite.Runtime()
-
-	defer testsuite.Reset(testsuite.ResetElastic)
-
-	wg := &sync.WaitGroup{}
-
-	server := web.NewServer(ctx, rt, wg)
-	server.Start()
-
-	// give our server time to start
-	time.Sleep(time.Second)
-
-	defer server.Stop()
-
-	tcs := []struct {
-		method               string
-		url                  string
-		body                 string
-		expectedStatus       int
-		expectedError        string
-		expectedHits         []models.ContactID
-		expectedQuery        string
-		expectedAttributes   []string
-		expectedFields       []*assets.FieldReference
-		expectedSchemes      []string
-		expectedAllowAsGroup bool
-	}{
-		{ // 0
-			method:         "GET",
-			url:            "/mr/contact/search",
-			expectedStatus: 405,
-			expectedError:  "illegal method: GET",
-		},
-		{ // 1
-			method:         "POST",
-			url:            "/mr/contact/search",
-			body:           fmt.Sprintf(`{"org_id": 1, "query": "birthday = tomorrow", "group_id": %d}`, testdata.ActiveGroup.ID),
-			expectedStatus: 400,
-			expectedError:  "can't resolve 'birthday' to attribute, scheme or field",
-		},
-		{ // 2
-			method:         "POST",
-			url:            "/mr/contact/search",
-			body:           fmt.Sprintf(`{"org_id": 1, "query": "age > tomorrow", "group_id": %d}`, testdata.ActiveGroup.ID),
-			expectedStatus: 400,
-			expectedError:  "can't convert 'tomorrow' to a number",
-		},
-		{ // 3
-			method:               "POST",
-			url:                  "/mr/contact/search",
-			body:                 fmt.Sprintf(`{"org_id": 1, "query": "Cathy", "group_id": %d}`, testdata.ActiveGroup.ID),
-			expectedStatus:       200,
-			expectedHits:         []models.ContactID{testdata.Cathy.ID},
-			expectedQuery:        `name ~ "Cathy"`,
-			expectedAttributes:   []string{"name"},
-			expectedFields:       []*assets.FieldReference{},
-			expectedSchemes:      []string{},
-			expectedAllowAsGroup: true,
-		},
-		{ // 4
-			method:               "POST",
-			url:                  "/mr/contact/search",
-			body:                 fmt.Sprintf(`{"org_id": 1, "query": "Cathy OR George", "group_id": %d, "exclude_ids": [%d, %d]}`, testdata.ActiveGroup.ID, testdata.Bob.ID, testdata.George.ID),
-			expectedStatus:       200,
-			expectedHits:         []models.ContactID{testdata.Cathy.ID},
-			expectedQuery:        `name ~ "Cathy" OR name ~ "George"`,
-			expectedAttributes:   []string{"name"},
-			expectedFields:       []*assets.FieldReference{},
-			expectedSchemes:      []string{},
-			expectedAllowAsGroup: true,
-		},
-		{ // 5
-			method:             "POST",
-			url:                "/mr/contact/search",
-			body:               fmt.Sprintf(`{"org_id": 1, "query": "AGE = 10 and gender = M", "group_id": %d}`, testdata.ActiveGroup.ID),
-			expectedStatus:     200,
-			expectedHits:       []models.ContactID{},
-			expectedQuery:      `age = 10 AND gender = "M"`,
-			expectedAttributes: []string{},
-			expectedFields: []*assets.FieldReference{
-				assets.NewFieldReference("age", "Age"),
-				assets.NewFieldReference("gender", "Gender"),
-			},
-			expectedSchemes:      []string{},
-			expectedAllowAsGroup: true,
-		},
-		{ // 6
-			method:               "POST",
-			url:                  "/mr/contact/search",
-			body:                 fmt.Sprintf(`{"org_id": 1, "query": "", "group_id": %d}`, testdata.TestersGroup.ID),
-			expectedStatus:       200,
-			expectedHits:         []models.ContactID{10013, 10012, 10011, 10010, 10009, 10008, 10007, 10006, 10005, 10004},
-			expectedQuery:        ``,
-			expectedAttributes:   []string{},
-			expectedFields:       []*assets.FieldReference{},
-			expectedSchemes:      []string{},
-			expectedAllowAsGroup: true,
-		},
-	}
-
-	for i, tc := range tcs {
-		var body io.Reader
-		if tc.body != "" {
-			body = bytes.NewReader([]byte(tc.body))
-		}
-
-		req, err := http.NewRequest(tc.method, "http://localhost:8090"+tc.url, body)
-		assert.NoError(t, err, "%d: error creating request", i)
-
-		resp, err := http.DefaultClient.Do(req)
-		assert.NoError(t, err, "%d: error making request", i)
-
-		assert.Equal(t, tc.expectedStatus, resp.StatusCode, "%d: unexpected status", i)
-
-		content, err := io.ReadAll(resp.Body)
-		assert.NoError(t, err, "%d: error reading body", i)
-
-		// on 200 responses parse them
-		if resp.StatusCode == 200 {
-			r := &contact.SearchResponse{}
-			err = json.Unmarshal(content, r)
-			assert.NoError(t, err)
-			assert.Equal(t, tc.expectedHits, r.ContactIDs, "%d: hits mismatch", i)
-			assert.Equal(t, tc.expectedQuery, r.Query, "%d: query mismatch", i)
-
-			if len(tc.expectedAttributes) > 0 || len(tc.expectedFields) > 0 || len(tc.expectedSchemes) > 0 {
-				assert.Equal(t, tc.expectedAttributes, r.Metadata.Attributes)
-				assert.Equal(t, tc.expectedFields, r.Metadata.Fields)
-				assert.Equal(t, tc.expectedSchemes, r.Metadata.Schemes)
-				assert.Equal(t, tc.expectedAllowAsGroup, r.Metadata.AllowAsGroup)
-			}
-		} else {
-			r := &web.ErrorResponse{}
-			err = json.Unmarshal(content, r)
-			assert.NoError(t, err)
-			assert.Equal(t, tc.expectedError, r.Error)
-		}
-	}
-}
-
 func TestParseQuery(t *testing.T) {
 	ctx, rt := testsuite.Runtime()
 
 	defer testsuite.Reset(testsuite.ResetAll)
 
 	testsuite.RunWebTests(t, ctx, rt, "testdata/parse_query.json", nil)
+}
+
+func TestSearch(t *testing.T) {
+	ctx, rt := testsuite.Runtime()
+
+	testsuite.RunWebTests(t, ctx, rt, "testdata/search.json", nil)
+}
+
+func TestURNs(t *testing.T) {
+	ctx, rt := testsuite.Runtime()
+
+	testsuite.RunWebTests(t, ctx, rt, "testdata/urns.json", nil)
 }
 
 func TestSpecToCreation(t *testing.T) {

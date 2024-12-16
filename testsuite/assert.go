@@ -9,7 +9,7 @@ import (
 	"github.com/nyaruka/gocommon/jsonx"
 	"github.com/nyaruka/goflow/test"
 	"github.com/nyaruka/mailroom/core/models"
-	"github.com/nyaruka/mailroom/core/queue"
+	"github.com/nyaruka/mailroom/utils/queues"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -72,7 +72,7 @@ func AssertBatchTasks(t *testing.T, orgID models.OrgID, expected map[string]int,
 
 	actual := make(map[string]int, 5)
 	for _, taskJSON := range tasks {
-		task := &queue.Task{}
+		task := &queues.Task{}
 		jsonx.MustUnmarshal(json.RawMessage(taskJSON), task)
 
 		actual[task.Type] += 1

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/jmoiron/sqlx"
@@ -11,7 +12,6 @@ import (
 	"github.com/nyaruka/mailroom/core/hooks"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
 )
 
 func init() {
@@ -34,7 +34,7 @@ func handlePreMsgCreated(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, 
 	if event.Msg.Channel() != nil {
 		channel = oa.ChannelByUUID(event.Msg.Channel().UUID)
 		if channel == nil {
-			return errors.Errorf("unable to load channel with uuid: %s", event.Msg.Channel().UUID)
+			return fmt.Errorf("unable to load channel with uuid: %s", event.Msg.Channel().UUID)
 		}
 	}
 
@@ -44,7 +44,7 @@ func handlePreMsgCreated(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, 
 	}
 
 	// android channels get normal timeouts
-	if channel.Type() == models.ChannelTypeAndroid {
+	if channel.IsAndroid() {
 		return nil
 	}
 
@@ -60,7 +60,7 @@ func handleMsgCreated(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa 
 
 	// must be in a session
 	if scene.Session() == nil {
-		return errors.Errorf("cannot handle msg created event without session")
+		return fmt.Errorf("cannot handle msg created event without session")
 	}
 
 	slog.Debug("msg created", "contact", scene.ContactUUID(), "session", scene.SessionID(), "text", event.Msg.Text(), "urn", event.Msg.URN())
@@ -71,7 +71,7 @@ func handleMsgCreated(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa 
 		if models.GetURNInt(urn, "id") == 0 {
 			urn, err := models.GetOrCreateURN(ctx, tx, oa, scene.ContactID(), event.Msg.URN())
 			if err != nil {
-				return errors.Wrapf(err, "unable to get or create URN: %s", event.Msg.URN())
+				return fmt.Errorf("unable to get or create URN: %s: %w", event.Msg.URN(), err)
 			}
 			// update our Msg with our full URN
 			event.Msg.SetURN(urn)
@@ -83,7 +83,7 @@ func handleMsgCreated(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa 
 	if event.Msg.Channel() != nil {
 		channel = oa.ChannelByUUID(event.Msg.Channel().UUID)
 		if channel == nil {
-			return errors.Errorf("unable to load channel with uuid: %s", event.Msg.Channel().UUID)
+			return fmt.Errorf("unable to load channel with uuid: %s", event.Msg.Channel().UUID)
 		}
 	}
 
@@ -95,23 +95,16 @@ func handleMsgCreated(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa 
 		flow = flowAsset.(*models.Flow)
 	}
 
-	var tpl *models.Template
-	if event.Msg.Templating() != nil {
-		tpl = oa.TemplateByUUID(event.Msg.Templating().Template().UUID)
-	}
-
-	msg, err := models.NewOutgoingFlowMsg(rt, oa.Org(), channel, scene.Session(), flow, event.Msg, tpl, event.CreatedOn())
+	msg, err := models.NewOutgoingFlowMsg(rt, oa.Org(), channel, scene.Session(), flow, event.Msg, event.CreatedOn())
 	if err != nil {
-		return errors.Wrapf(err, "error creating outgoing message to %s", event.Msg.URN())
+		return fmt.Errorf("error creating outgoing message to %s: %w", event.Msg.URN(), err)
 	}
 
-	// register to have this message committed
+	// commit this message in the transaction
 	scene.AppendToEventPreCommitHook(hooks.CommitMessagesHook, msg)
 
-	// don't send messages for surveyor flows
-	if scene.Session().SessionType() != models.FlowTypeSurveyor {
-		scene.AppendToEventPostCommitHook(hooks.SendMessagesHook, msg)
-	}
+	// and queue it to be sent after the transaction is complete
+	scene.AppendToEventPostCommitHook(hooks.SendMessagesHook, msg)
 
 	return nil
 }

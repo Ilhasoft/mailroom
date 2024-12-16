@@ -1,7 +1,6 @@
 package goflow
 
 import (
-	"encoding/json"
 	"sync"
 
 	"github.com/Masterminds/semver"
@@ -15,24 +14,51 @@ import (
 var migConf *migrations.Config
 var migConfInit sync.Once
 
+type FlowDefError struct {
+	cause error
+}
+
+func (e *FlowDefError) Error() string {
+	return e.cause.Error()
+}
+
+func (e *FlowDefError) Unwrap() error {
+	return e.cause
+}
+
 // SpecVersion returns the current flow spec version
 func SpecVersion() *semver.Version {
 	return definition.CurrentSpecVersion
 }
 
 // ReadFlow reads a flow from the given JSON definition, migrating it if necessary
-func ReadFlow(cfg *runtime.Config, data json.RawMessage) (flows.Flow, error) {
-	return definition.ReadFlow(data, MigrationConfig(cfg))
+func ReadFlow(cfg *runtime.Config, data []byte) (flows.Flow, error) {
+	f, err := definition.ReadFlow(data, MigrationConfig(cfg))
+	if err != nil {
+		return nil, &FlowDefError{cause: err}
+
+	}
+	return f, nil
 }
 
 // CloneDefinition clones the given flow definition
-func CloneDefinition(data json.RawMessage, depMapping map[uuids.UUID]uuids.UUID) (json.RawMessage, error) {
-	return migrations.Clone(data, depMapping)
+func CloneDefinition(data []byte, depMapping map[uuids.UUID]uuids.UUID) ([]byte, error) {
+	f, err := migrations.Clone(data, depMapping)
+	if err != nil {
+		return nil, &FlowDefError{cause: err}
+
+	}
+	return f, nil
 }
 
 // MigrateDefinition migrates the given flow definition to the specified version
-func MigrateDefinition(cfg *runtime.Config, data json.RawMessage, toVersion *semver.Version) (json.RawMessage, error) {
-	return migrations.MigrateToVersion(data, toVersion, MigrationConfig(cfg))
+func MigrateDefinition(cfg *runtime.Config, data []byte, toVersion *semver.Version) ([]byte, error) {
+	f, err := migrations.MigrateToVersion(data, toVersion, MigrationConfig(cfg))
+	if err != nil {
+		return nil, &FlowDefError{cause: err}
+
+	}
+	return f, nil
 }
 
 // MigrationConfig returns the migration configuration for flows

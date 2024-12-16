@@ -2,12 +2,12 @@ package hooks
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/pkg/errors"
 )
 
 // CommitIVRHook is our hook for comitting scene messages / say commands
@@ -26,7 +26,7 @@ func (h *commitIVRHook) Apply(ctx context.Context, rt *runtime.Runtime, tx *sqlx
 
 	// insert all our messages
 	if err := models.InsertMessages(ctx, tx, msgs); err != nil {
-		return errors.Wrapf(err, "error writing messages")
+		return fmt.Errorf("error writing messages: %w", err)
 	}
 
 	return nil

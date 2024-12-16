@@ -160,7 +160,7 @@ func RunTestCases(t *testing.T, ctx context.Context, rt *runtime.Runtime, tcs []
 	oa, err := models.GetOrgAssets(ctx, rt, models.OrgID(1))
 	assert.NoError(t, err)
 
-	eng := goflow.Engine(rt.Config)
+	eng := goflow.Engine(rt)
 
 	// reuse id from one of our real flows
 	flowUUID := testdata.Favorites.UUID

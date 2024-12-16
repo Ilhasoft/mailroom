@@ -3,6 +3,7 @@ package hooks
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 
 	"github.com/jmoiron/sqlx"
@@ -11,7 +12,6 @@ import (
 	"github.com/nyaruka/goflow/flows/events"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
 )
 
 // CommitFieldChangesHook is our hook for contact field changes
@@ -55,7 +55,7 @@ func (h *commitFieldChangesHook) Apply(ctx context.Context, rt *runtime.Runtime,
 		// marshal the rest of our updates to JSON
 		fieldJSON, err := json.Marshal(updates)
 		if err != nil {
-			return errors.Wrapf(err, "error marshalling field values")
+			return fmt.Errorf("error marshalling field values: %w", err)
 		}
 
 		// and queue them up for our update
@@ -70,7 +70,7 @@ func (h *commitFieldChangesHook) Apply(ctx context.Context, rt *runtime.Runtime,
 	for _, fds := range fieldDeletes {
 		err := models.BulkQuery(ctx, "deleting contact field values", tx, sqlDeleteContactFields, fds)
 		if err != nil {
-			return errors.Wrapf(err, "error deleting contact fields")
+			return fmt.Errorf("error deleting contact fields: %w", err)
 		}
 	}
 
@@ -78,7 +78,7 @@ func (h *commitFieldChangesHook) Apply(ctx context.Context, rt *runtime.Runtime,
 	if len(fieldUpdates) > 0 {
 		err := models.BulkQuery(ctx, "updating contact field values", tx, sqlUpdateContactFields, fieldUpdates)
 		if err != nil {
-			return errors.Wrapf(err, "error updating contact fields")
+			return fmt.Errorf("error updating contact fields: %w", err)
 		}
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -23,7 +24,6 @@ import (
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/null/v3"
 	"github.com/nyaruka/redisx"
-	"github.com/pkg/errors"
 )
 
 // URNID is our type for urn ids, which can be null
@@ -52,13 +52,13 @@ const NilContactStatus ContactStatus = ""
 
 // possible contact statuses
 const (
-	ContactStatusActive   = "A"
-	ContactStatusBlocked  = "B"
-	ContactStatusStopped  = "S"
-	ContactStatusArchived = "V"
+	ContactStatusActive   ContactStatus = "A"
+	ContactStatusBlocked  ContactStatus = "B"
+	ContactStatusStopped  ContactStatus = "S"
+	ContactStatusArchived ContactStatus = "V"
 )
 
-var contactToModelStatus = map[flows.ContactStatus]ContactStatus{
+var ContactToModelStatus = map[flows.ContactStatus]ContactStatus{
 	flows.ContactStatusActive:   ContactStatusActive,
 	flows.ContactStatusBlocked:  ContactStatusBlocked,
 	flows.ContactStatusStopped:  ContactStatusStopped,
@@ -72,9 +72,26 @@ var contactToFlowStatus = map[ContactStatus]flows.ContactStatus{
 	ContactStatusArchived: flows.ContactStatusArchived,
 }
 
+type URNError struct {
+	msg   string
+	Code  string
+	Index int
+}
+
+func (e *URNError) Error() string { return e.msg }
+
+func newURNInUseError(index int) error {
+	return &URNError{msg: fmt.Sprintf("URN %d in use by other contacts", index), Code: "taken", Index: index}
+}
+
+func NewURNInvalidError(index int, cause error) error {
+	return &URNError{msg: fmt.Sprintf("URN %d invalid: %s", index, cause.Error()), Code: "invalid", Index: index}
+}
+
 // Contact is our mailroom struct that represents a contact
 type Contact struct {
 	id            ContactID
+	orgID         OrgID
 	uuid          flows.ContactUUID
 	name          string
 	language      i18n.Language
@@ -114,12 +131,60 @@ func (c *Contact) URNForID(urnID URNID) urns.URN {
 	return urns.NilURN
 }
 
+const sqlDeleteAllContactGroups = `
+DELETE FROM contacts_contactgroup_contacts
+      WHERE contact_id = $2 AND contactgroup_id = ANY(
+		  SELECT id from contacts_contactgroup WHERE org_id = $1 and group_type IN ('M', 'Q')
+	  )`
+
+// Stop stops this contact, removing them from all groups and setting their state to stopped.
+func (c *Contact) Stop(ctx context.Context, db DBorTx, oa *OrgAssets) error {
+	// delete the contact from all groups
+	_, err := db.ExecContext(ctx, sqlDeleteAllContactGroups, c.orgID, c.id)
+	if err != nil {
+		return fmt.Errorf("error removing stopped contact from groups: %w", err)
+	}
+
+	// remove all unfired campaign event fires
+	_, err = db.ExecContext(ctx, `DELETE FROM campaigns_eventfire WHERE contact_id = $1 AND fired IS NULL`, c.id)
+	if err != nil {
+		return fmt.Errorf("error deleting unfired event fires: %w", err)
+	}
+
+	// remove the contact from any triggers
+	// TODO: this could leave a trigger with no contacts or groups
+	_, err = db.ExecContext(ctx, `DELETE FROM triggers_trigger_contacts WHERE contact_id = $1`, c.id)
+	if err != nil {
+		return fmt.Errorf("error removing contact from triggers: %w", err)
+	}
+
+	// mark as stopped
+	_, err = db.ExecContext(ctx, `UPDATE contacts_contact SET status = 'S', modified_on = NOW() WHERE id = $1`, c.id)
+	if err != nil {
+		return fmt.Errorf("error marking contact as stopped: %w", err)
+	}
+
+	// they are only in the stopped group
+	newGroups := make([]*Group, 0, 1)
+	for _, g := range oa.groups {
+		if g.(*Group).Type() == GroupTypeDBStopped {
+			newGroups = append(newGroups, g.(*Group))
+			break
+		}
+	}
+
+	c.groups = newGroups
+	c.status = ContactStatusStopped
+	return nil
+}
+
 // Unstop sets the status to stopped for this contact
 func (c *Contact) Unstop(ctx context.Context, db DBorTx) error {
 	_, err := db.ExecContext(ctx, `UPDATE contacts_contact SET status = 'A', modified_on = NOW() WHERE id = $1`, c.id)
 	if err != nil {
-		return errors.Wrapf(err, "error unstopping contact")
+		return fmt.Errorf("error unstopping contact: %w", err)
 	}
+
 	c.status = ContactStatusActive
 	return nil
 }
@@ -135,7 +200,7 @@ func (c *Contact) UpdateLastSeenOn(ctx context.Context, db DBorTx, lastSeenOn ti
 func (c *Contact) UpdatePreferredURN(ctx context.Context, db DBorTx, oa *OrgAssets, urnID URNID, channel *Channel) error {
 	// no urns? that's an error
 	if len(c.urns) == 0 {
-		return errors.Errorf("can't set preferred URN on contact with no URNs")
+		return fmt.Errorf("can't set preferred URN on contact with no URNs")
 	}
 
 	// is this already our top URN?
@@ -156,20 +221,20 @@ func (c *Contact) UpdatePreferredURN(ctx context.Context, db DBorTx, oa *OrgAsse
 		if id == urnID {
 			updated, err := updateURNChannel(urn, channel)
 			if err != nil {
-				return errors.Wrapf(err, "error updating channel on urn")
+				return fmt.Errorf("error updating channel on urn: %w", err)
 			}
 			topURN = updated
 		} else {
 			updated, err := updateURNChannel(urn, nil)
 			if err != nil {
-				return errors.Wrapf(err, "error updating priority on urn")
+				return fmt.Errorf("error updating priority on urn: %w", err)
 			}
 			newURNs = append(newURNs, updated)
 		}
 	}
 
 	if topURN == urns.NilURN {
-		return errors.Errorf("unable to find urn with id: %d", urnID)
+		return fmt.Errorf("unable to find urn with id: %d", urnID)
 	}
 
 	c.urns = []urns.URN{topURN}
@@ -183,12 +248,12 @@ func (c *Contact) UpdatePreferredURN(ctx context.Context, db DBorTx, oa *OrgAsse
 	// write our new state to the db
 	err := UpdateContactURNs(ctx, db, oa, []*ContactURNsChanged{change})
 	if err != nil {
-		return errors.Wrapf(err, "error updating urns for contact")
+		return fmt.Errorf("error updating urns for contact: %w", err)
 	}
 
 	err = UpdateContactModifiedOn(ctx, db, []ContactID{c.ID()})
 	if err != nil {
-		return errors.Wrapf(err, "error updating modified on on contact")
+		return fmt.Errorf("error updating modified on on contact: %w", err)
 	}
 
 	return nil
@@ -229,7 +294,7 @@ func (c *Contact) FlowContact(oa *OrgAssets) (*flows.Contact, error) {
 		assets.IgnoreMissing,
 	)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error creating flow contact")
+		return nil, fmt.Errorf("error creating flow contact: %w", err)
 	}
 
 	return contact, nil
@@ -258,7 +323,7 @@ func LoadContacts(ctx context.Context, db Queryer, oa *OrgAssets, ids []ContactI
 
 	rows, err := db.QueryContext(ctx, sqlSelectContact, pq.Array(ids), oa.OrgID())
 	if err != nil {
-		return nil, errors.Wrap(err, "error selecting contacts")
+		return nil, fmt.Errorf("error selecting contacts: %w", err)
 	}
 	defer rows.Close()
 
@@ -267,11 +332,12 @@ func LoadContacts(ctx context.Context, db Queryer, oa *OrgAssets, ids []ContactI
 		e := &contactEnvelope{}
 		err := dbutil.ScanJSON(rows, e)
 		if err != nil {
-			return nil, errors.Wrap(err, "error scanning contact json")
+			return nil, fmt.Errorf("error scanning contact json: %w", err)
 		}
 
 		contact := &Contact{
-			id:            ContactID(e.ID),
+			id:            e.ID,
+			orgID:         e.OrgID,
 			uuid:          e.UUID,
 			name:          e.Name,
 			language:      e.Language,
@@ -351,7 +417,7 @@ func LoadContactsByUUID(ctx context.Context, db Queryer, oa *OrgAssets, uuids []
 func GetNewestContactModifiedOn(ctx context.Context, db Queryer, oa *OrgAssets) (*time.Time, error) {
 	rows, err := db.QueryContext(ctx, "SELECT modified_on FROM contacts_contact WHERE org_id = $1 ORDER BY modified_on DESC LIMIT 1", oa.OrgID())
 	if err != nil && err != sql.ErrNoRows {
-		return nil, errors.Wrapf(err, "error selecting most recently changed contact for org: %d", oa.OrgID())
+		return nil, fmt.Errorf("error selecting most recently changed contact for org: %d: %w", oa.OrgID(), err)
 	}
 	defer rows.Close()
 	if err != sql.ErrNoRows {
@@ -359,7 +425,7 @@ func GetNewestContactModifiedOn(ctx context.Context, db Queryer, oa *OrgAssets) 
 		var newest time.Time
 		err = rows.Scan(&newest)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error scanning most recent contact modified_on for org: %d", oa.OrgID())
+			return nil, fmt.Errorf("error scanning most recent contact modified_on for org: %d: %w", oa.OrgID(), err)
 		}
 
 		return &newest, nil
@@ -388,7 +454,7 @@ func getContactIDsFromUUIDs(ctx context.Context, db Queryer, orgID OrgID, uuids 
 
 	ids, err := queryContactIDs(ctx, db, `SELECT id FROM contacts_contact WHERE org_id = $1 AND uuid = ANY($2) AND is_active = TRUE`, orgID, pq.Array(uuids))
 	if err != nil {
-		return nil, errors.Wrapf(err, "error selecting contact ids by UUID")
+		return nil, fmt.Errorf("error selecting contact ids by UUID: %w", err)
 	}
 	return ids, nil
 }
@@ -397,14 +463,14 @@ func getContactIDsFromUUIDs(ctx context.Context, db Queryer, orgID OrgID, uuids 
 func queryContactIDs(ctx context.Context, db Queryer, query string, args ...any) ([]ContactID, error) {
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil && err != sql.ErrNoRows {
-		return nil, errors.Wrapf(err, "error querying contact ids")
+		return nil, fmt.Errorf("error querying contact ids: %w", err)
 	}
 
 	ids := make([]ContactID, 0, 10)
 
 	ids, err = dbutil.ScanAllSlice(rows, ids)
 	if err != nil {
-		return nil, errors.Wrap(err, "error scanning contact ids")
+		return nil, fmt.Errorf("error scanning contact ids: %w", err)
 	}
 	return ids, nil
 }
@@ -436,9 +502,9 @@ func (u *ContactURN) AsURN(oa *OrgAssets) (urns.URN, error) {
 	}
 
 	// re-encode our URN
-	urn, err := urns.NewURNFromParts(u.Scheme, u.Path, query.Encode(), string(u.Display))
+	urn, err := urns.NewFromParts(u.Scheme, u.Path, query, string(u.Display))
 	if err != nil {
-		return urns.NilURN, errors.Wrapf(err, "invalid URN %s:%s", u.Scheme, u.Path)
+		return urns.NilURN, fmt.Errorf("invalid URN %s:%s: %w", u.Scheme, u.Path, err)
 	}
 
 	return urn, nil
@@ -447,12 +513,13 @@ func (u *ContactURN) AsURN(oa *OrgAssets) (urns.URN, error) {
 // contactEnvelope is our JSON structure for a contact as read from the database
 type contactEnvelope struct {
 	ID       ContactID         `json:"id"`
+	OrgID    OrgID             `json:"org_id"`
 	UUID     flows.ContactUUID `json:"uuid"`
 	Name     string            `json:"name"`
 	Language i18n.Language     `json:"language"`
 	Status   ContactStatus     `json:"status"`
 	Fields   map[assets.FieldUUID]struct {
-		Text     types.XText       `json:"text"`
+		Text     *types.XText      `json:"text"`
 		Datetime *types.XDateTime  `json:"datetime,omitempty"`
 		Number   *types.XNumber    `json:"number,omitempty"`
 		State    envs.LocationPath `json:"state,omitempty"`
@@ -537,27 +604,30 @@ WHERE
 `
 
 // CreateContact creates a new contact for the passed in org with the passed in URNs
-func CreateContact(ctx context.Context, db DB, oa *OrgAssets, userID UserID, name string, language i18n.Language, urnz []urns.URN) (*Contact, *flows.Contact, error) {
-	// ensure all URNs are normalized
-	for i, urn := range urnz {
-		urnz[i] = urn.Normalize(string(oa.Env().DefaultCountry()))
+func CreateContact(ctx context.Context, db DB, oa *OrgAssets, userID UserID, name string, language i18n.Language, status ContactStatus, urnz []urns.URN) (*Contact, *flows.Contact, error) {
+	// ensure all URNs are normalized and valid
+	urnz, err := nornalizeAndValidateURNs(urnz)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// find current owners of these URNs
-	owners, err := contactIDsFromURNs(ctx, db, oa.OrgID(), urnz)
+	owners, err := GetContactIDsFromURNs(ctx, db, oa.OrgID(), urnz)
 	if err != nil {
-		return nil, nil, errors.Wrapf(err, "error looking up contacts for URNs")
+		return nil, nil, fmt.Errorf("error looking up contacts for URNs: %w", err)
 	}
 
-	if len(uniqueContactIDs(owners)) > 0 {
-		return nil, nil, errors.New("URNs in use by other contacts")
+	for i, urn := range urnz {
+		if owners[urn] != NilContactID {
+			return nil, nil, newURNInUseError(i)
+		}
 	}
 
-	contactID, err := tryInsertContactAndURNs(ctx, db, oa.OrgID(), userID, name, language, urnz, NilChannelID)
+	contactID, err := tryInsertContactAndURNs(ctx, db, oa.OrgID(), userID, name, language, status, urnz, NilChannelID)
 	if err != nil {
 		// always possible that another thread created a contact with these URNs after we checked above
 		if dbutil.IsUniqueViolation(err) {
-			return nil, nil, errors.New("URNs in use by other contacts")
+			return nil, nil, newURNInUseError(0)
 		}
 		return nil, nil, err
 	}
@@ -565,17 +635,17 @@ func CreateContact(ctx context.Context, db DB, oa *OrgAssets, userID UserID, nam
 	// load a full contact so that we can calculate dynamic groups
 	contact, err := LoadContact(ctx, db, oa, contactID)
 	if err != nil {
-		return nil, nil, errors.Wrapf(err, "error loading new contact")
+		return nil, nil, fmt.Errorf("error loading new contact: %w", err)
 	}
 
 	flowContact, err := contact.FlowContact(oa)
 	if err != nil {
-		return nil, nil, errors.Wrapf(err, "error creating flow contact")
+		return nil, nil, fmt.Errorf("error creating flow contact: %w", err)
 	}
 
 	err = CalculateDynamicGroups(ctx, db, oa, []*flows.Contact{flowContact})
 	if err != nil {
-		return nil, nil, errors.Wrapf(err, "error calculating dynamic groups")
+		return nil, nil, fmt.Errorf("error calculating dynamic groups: %w", err)
 	}
 
 	return contact, flowContact, nil
@@ -588,9 +658,10 @@ func CreateContact(ctx context.Context, db DB, oa *OrgAssets, userID UserID, nam
 // * If URNs exists and belongs to a single contact it returns that contact (other URNs are not assigned to the contact).
 // * If URNs exists and belongs to multiple contacts it will return an error.
 func GetOrCreateContact(ctx context.Context, db DB, oa *OrgAssets, urnz []urns.URN, channelID ChannelID) (*Contact, *flows.Contact, bool, error) {
-	// ensure all URNs are normalized
-	for i, urn := range urnz {
-		urnz[i] = urn.Normalize(string(oa.Env().DefaultCountry()))
+	// ensure all URNs are normalized and valid
+	urnz, err := nornalizeAndValidateURNs(urnz)
+	if err != nil {
+		return nil, nil, false, err
 	}
 
 	contactID, created, err := getOrCreateContact(ctx, db, oa.OrgID(), urnz, channelID)
@@ -601,19 +672,19 @@ func GetOrCreateContact(ctx context.Context, db DB, oa *OrgAssets, urnz []urns.U
 	// load a full contact so that we can calculate dynamic groups
 	contact, err := LoadContact(ctx, db, oa, contactID)
 	if err != nil {
-		return nil, nil, false, errors.Wrapf(err, "error loading new contact")
+		return nil, nil, false, fmt.Errorf("error loading new contact: %w", err)
 	}
 
 	flowContact, err := contact.FlowContact(oa)
 	if err != nil {
-		return nil, nil, false, errors.Wrapf(err, "error creating flow contact")
+		return nil, nil, false, fmt.Errorf("error creating flow contact: %w", err)
 	}
 
 	// calculate dynamic groups if contact was created
 	if created {
 		err := CalculateDynamicGroups(ctx, db, oa, []*flows.Contact{flowContact})
 		if err != nil {
-			return nil, nil, false, errors.Wrapf(err, "error calculating dynamic groups")
+			return nil, nil, false, fmt.Errorf("error calculating dynamic groups: %w", err)
 		}
 	}
 
@@ -623,15 +694,16 @@ func GetOrCreateContact(ctx context.Context, db DB, oa *OrgAssets, urnz []urns.U
 // GetOrCreateContactsFromURNs will fetch or create the contacts for the passed in URNs, returning a map of the fetched
 // contacts and another map of the created contacts.
 func GetOrCreateContactsFromURNs(ctx context.Context, db DB, oa *OrgAssets, urnz []urns.URN) (map[urns.URN]*Contact, map[urns.URN]*Contact, error) {
-	// ensure all URNs are normalized
-	for i, urn := range urnz {
-		urnz[i] = urn.Normalize(string(oa.Env().DefaultCountry()))
+	// ensure all URNs are normalized and valid
+	urnz, err := nornalizeAndValidateURNs(urnz)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// find current owners of these URNs
 	owners, err := contactsFromURNs(ctx, db, oa, urnz)
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "error looking up contacts for URNs")
+		return nil, nil, fmt.Errorf("error looking up contacts for URNs: %w", err)
 	}
 
 	fetched := make(map[urns.URN]*Contact, len(urnz))
@@ -642,7 +714,7 @@ func GetOrCreateContactsFromURNs(ctx context.Context, db DB, oa *OrgAssets, urnz
 		if contact == nil {
 			contact, _, _, err := GetOrCreateContact(ctx, db, oa, []urns.URN{urn}, NilChannelID)
 			if err != nil {
-				return nil, nil, errors.Wrapf(err, "error creating contact")
+				return nil, nil, fmt.Errorf("error creating contact: %w", err)
 			}
 			created[urn] = contact
 		} else {
@@ -653,8 +725,8 @@ func GetOrCreateContactsFromURNs(ctx context.Context, db DB, oa *OrgAssets, urnz
 	return fetched, created, nil
 }
 
-// looks up the contact IDs who own the given urns (which should be normalized by the caller) and returns that information as a map
-func contactIDsFromURNs(ctx context.Context, db Queryer, orgID OrgID, urnz []urns.URN) (map[urns.URN]ContactID, error) {
+// GetContactIDsFromURNs looks up the contact IDs who own the given urns (which should be normalized by the caller) and returns that information as a map
+func GetContactIDsFromURNs(ctx context.Context, db Queryer, orgID OrgID, urnz []urns.URN) (map[urns.URN]ContactID, error) {
 	identityToOriginal := make(map[urns.URN]urns.URN, len(urnz))
 	identities := make([]urns.URN, len(urnz))
 	owners := make(map[urns.URN]ContactID, len(urnz))
@@ -668,7 +740,7 @@ func contactIDsFromURNs(ctx context.Context, db Queryer, orgID OrgID, urnz []urn
 
 	rows, err := db.QueryContext(ctx, `SELECT contact_id, identity FROM contacts_contacturn WHERE org_id = $1 AND identity = ANY($2)`, orgID, pq.Array(identities))
 	if err != nil && err != sql.ErrNoRows {
-		return nil, errors.Wrapf(err, "error querying contact URNs")
+		return nil, fmt.Errorf("error querying contact URNs: %w", err)
 	}
 	defer rows.Close()
 
@@ -676,7 +748,7 @@ func contactIDsFromURNs(ctx context.Context, db Queryer, orgID OrgID, urnz []urn
 		var urn urns.URN
 		var id ContactID
 		if err := rows.Scan(&id, &urn); err != nil {
-			return nil, errors.Wrapf(err, "error scanning URN result")
+			return nil, fmt.Errorf("error scanning URN result: %w", err)
 		}
 		owners[identityToOriginal[urn]] = id
 	}
@@ -684,9 +756,9 @@ func contactIDsFromURNs(ctx context.Context, db Queryer, orgID OrgID, urnz []urn
 	return owners, nil
 }
 
-// like contactIDsFromURNs but fetches the contacts
+// like GetContactIDsFromURNs but fetches the contacts
 func contactsFromURNs(ctx context.Context, db Queryer, oa *OrgAssets, urnz []urns.URN) (map[urns.URN]*Contact, error) {
-	ids, err := contactIDsFromURNs(ctx, db, oa.OrgID(), urnz)
+	ids, err := GetContactIDsFromURNs(ctx, db, oa.OrgID(), urnz)
 	if err != nil {
 		return nil, err
 	}
@@ -701,7 +773,7 @@ func contactsFromURNs(ctx context.Context, db Queryer, oa *OrgAssets, urnz []urn
 
 	fetched, err := LoadContacts(ctx, db, oa, existingIDs)
 	if err != nil {
-		return nil, errors.Wrap(err, "error loading contacts")
+		return nil, fmt.Errorf("error loading contacts: %w", err)
 	}
 
 	// and transform those into a map by URN
@@ -719,9 +791,9 @@ func contactsFromURNs(ctx context.Context, db Queryer, oa *OrgAssets, urnz []urn
 
 func getOrCreateContact(ctx context.Context, db DB, orgID OrgID, urnz []urns.URN, channelID ChannelID) (ContactID, bool, error) {
 	// find current owners of these URNs
-	owners, err := contactIDsFromURNs(ctx, db, orgID, urnz)
+	owners, err := GetContactIDsFromURNs(ctx, db, orgID, urnz)
 	if err != nil {
-		return NilContactID, false, errors.Wrapf(err, "error looking up contacts for URNs")
+		return NilContactID, false, fmt.Errorf("error looking up contacts for URNs: %w", err)
 	}
 
 	uniqueOwners := uniqueContactIDs(owners)
@@ -731,7 +803,7 @@ func getOrCreateContact(ctx context.Context, db DB, orgID OrgID, urnz []urns.URN
 		return uniqueOwners[0], false, nil
 	}
 
-	contactID, err := tryInsertContactAndURNs(ctx, db, orgID, UserID(1), "", i18n.NilLanguage, urnz, channelID)
+	contactID, err := tryInsertContactAndURNs(ctx, db, orgID, UserID(1), "", i18n.NilLanguage, ContactStatusActive, urnz, channelID)
 	if err == nil {
 		return contactID, true, nil
 	}
@@ -739,9 +811,9 @@ func getOrCreateContact(ctx context.Context, db DB, orgID OrgID, urnz []urns.URN
 	if dbutil.IsUniqueViolation(err) {
 		// another thread must have created contacts with these URNs in the time between us looking them up and trying to
 		// create them ourselves, so let's try to fetch that contact
-		owners, err := contactIDsFromURNs(ctx, db, orgID, urnz)
+		owners, err := GetContactIDsFromURNs(ctx, db, orgID, urnz)
 		if err != nil {
-			return NilContactID, false, errors.Wrapf(err, "error looking up contacts for URNs")
+			return NilContactID, false, fmt.Errorf("error looking up contacts for URNs: %w", err)
 		}
 
 		uniqueOwners := uniqueContactIDs(owners)
@@ -770,22 +842,16 @@ func uniqueContactIDs(urnMap map[urns.URN]ContactID) []ContactID {
 	return unique
 }
 
-// Tries to create a new contact for the passed in org with the passed in URNs. Returned error can be tested with `dbutil.IsUniqueViolation` to
-// determine if problem was one or more of the URNs already exist and are assigned to other contacts.
-func tryInsertContactAndURNs(ctx context.Context, db DB, orgID OrgID, userID UserID, name string, language i18n.Language, urnz []urns.URN, channelID ChannelID) (ContactID, error) {
-	// check the URNs are valid
-	for _, urn := range urnz {
-		if err := urn.Validate(); err != nil {
-			return NilContactID, errors.Wrapf(err, "can't insert invalid URN '%s'", urn)
-		}
-	}
-
+// Tries to create a new contact for the passed in org with the passed in validated URNs. Returned error can be tested
+// with `dbutil.IsUniqueViolation` to determine if problem was one or more of the URNs already exist and are assigned to
+// other contacts.
+func tryInsertContactAndURNs(ctx context.Context, db DB, orgID OrgID, userID UserID, name string, language i18n.Language, status ContactStatus, urnz []urns.URN, channelID ChannelID) (ContactID, error) {
 	tx, err := db.BeginTxx(ctx, nil)
 	if err != nil {
-		return NilContactID, errors.Wrapf(err, "error beginning transaction")
+		return NilContactID, fmt.Errorf("error beginning transaction: %w", err)
 	}
 
-	contactID, err := insertContactAndURNs(ctx, tx, orgID, userID, name, language, urnz, channelID)
+	contactID, err := insertContactAndURNs(ctx, tx, orgID, userID, name, language, status, urnz, channelID)
 	if err != nil {
 		tx.Rollback()
 		return NilContactID, err
@@ -794,13 +860,13 @@ func tryInsertContactAndURNs(ctx context.Context, db DB, orgID OrgID, userID Use
 	err = tx.Commit()
 	if err != nil {
 		tx.Rollback()
-		return NilContactID, errors.Wrapf(err, "error committing transaction")
+		return NilContactID, fmt.Errorf("error committing transaction: %w", err)
 	}
 
 	return contactID, nil
 }
 
-func insertContactAndURNs(ctx context.Context, db DBorTx, orgID OrgID, userID UserID, name string, language i18n.Language, urnz []urns.URN, channelID ChannelID) (ContactID, error) {
+func insertContactAndURNs(ctx context.Context, db DBorTx, orgID OrgID, userID UserID, name string, language i18n.Language, status ContactStatus, urnz []urns.URN, channelID ChannelID) (ContactID, error) {
 	if userID == NilUserID {
 		userID = UserID(1)
 	}
@@ -808,13 +874,13 @@ func insertContactAndURNs(ctx context.Context, db DBorTx, orgID OrgID, userID Us
 	// first insert our contact
 	var contactID ContactID
 	err := db.GetContext(ctx, &contactID,
-		`INSERT INTO contacts_contact (org_id, is_active, status, uuid, name, language, ticket_count, created_on, modified_on, created_by_id, modified_by_id) 
-		VALUES($1, TRUE, 'A', $2, $3, $4, 0, $5, $5, $6, $6)
+		`INSERT INTO contacts_contact (org_id, is_active, uuid, name, language, status, ticket_count, created_on, modified_on, created_by_id, modified_by_id) 
+		VALUES($1, TRUE, $2, $3, $4, $5, 0, $6, $6, $7, $7)
 		RETURNING id`,
-		orgID, uuids.New(), null.String(name), null.String(string(language)), dates.Now(), userID,
+		orgID, uuids.New(), null.String(name), null.String(string(language)), status, dates.Now(), userID,
 	)
 	if err != nil {
-		return NilContactID, errors.Wrapf(err, "error inserting new contact")
+		return NilContactID, fmt.Errorf("error inserting new contact: %w", err)
 	}
 
 	priority := topURNPriority
@@ -829,7 +895,7 @@ func insertContactAndURNs(ctx context.Context, db DBorTx, orgID OrgID, userID Us
 		if orphanURNID != NilURNID {
 			_, err := db.ExecContext(ctx, `UPDATE contacts_contacturn SET contact_id = $2, priority = $3 WHERE id = $1`, orphanURNID, contactID, priority)
 			if err != nil {
-				return NilContactID, errors.Wrapf(err, "error attaching existing URN to new contact")
+				return NilContactID, fmt.Errorf("error attaching existing URN to new contact: %w", err)
 			}
 		} else {
 			_, err := db.ExecContext(ctx,
@@ -848,6 +914,17 @@ func insertContactAndURNs(ctx context.Context, db DBorTx, orgID OrgID, userID Us
 	return contactID, nil
 }
 
+func nornalizeAndValidateURNs(urnz []urns.URN) ([]urns.URN, error) {
+	norm := make([]urns.URN, len(urnz))
+	for i, urn := range urnz {
+		norm[i] = urn.Normalize()
+		if err := norm[i].Validate(); err != nil {
+			return nil, NewURNInvalidError(i, err)
+		}
+	}
+	return norm, nil
+}
+
 // URNForURN will return a URN for the passed in URN including all the special query parameters
 // set that goflow and mailroom depend on.
 func URNForURN(ctx context.Context, db Queryer, oa *OrgAssets, u urns.URN) (urns.URN, error) {
@@ -857,21 +934,21 @@ func URNForURN(ctx context.Context, db Queryer, oa *OrgAssets, u urns.URN) (urns
 		u.Identity(), oa.OrgID(),
 	)
 	if err != nil {
-		return urns.NilURN, errors.Errorf("error selecting URN: %s", u.Identity())
+		return urns.NilURN, fmt.Errorf("error selecting URN: %s", u.Identity())
 	}
 	defer rows.Close()
 
 	if !rows.Next() {
-		return urns.NilURN, errors.Errorf("no urn with identity: %s", u.Identity())
+		return urns.NilURN, fmt.Errorf("no urn with identity: %s", u.Identity())
 	}
 
 	err = dbutil.ScanJSON(rows, urn)
 	if err != nil {
-		return urns.NilURN, errors.Wrapf(err, "error loading contact urn")
+		return urns.NilURN, fmt.Errorf("error loading contact urn: %w", err)
 	}
 
 	if rows.Next() {
-		return urns.NilURN, errors.Wrapf(err, "more than one URN returned for identity query")
+		return urns.NilURN, fmt.Errorf("more than one URN returned for identity query: %w", err)
 	}
 
 	return urn.AsURN(oa)
@@ -900,7 +977,7 @@ func GetOrCreateURN(ctx context.Context, db DBorTx, oa *OrgAssets, contactID Con
 
 	_, err := db.NamedExecContext(ctx, sqlInsertContactURN, insert)
 	if err != nil {
-		return urns.NilURN, errors.Wrapf(err, "error inserting new urn: %s", u)
+		return urns.NilURN, fmt.Errorf("error inserting new urn: %s: %w", u, err)
 	}
 
 	// do a lookup once more
@@ -917,17 +994,17 @@ func URNForID(ctx context.Context, db Queryer, oa *OrgAssets, urnID URNID) (urns
 		urnID,
 	)
 	if err != nil {
-		return urns.NilURN, errors.Errorf("error selecting URN ID: %d", urnID)
+		return urns.NilURN, fmt.Errorf("error selecting URN ID: %d", urnID)
 	}
 	defer rows.Close()
 
 	if !rows.Next() {
-		return urns.NilURN, errors.Errorf("no urn with id: %d", urnID)
+		return urns.NilURN, fmt.Errorf("no urn with id: %d", urnID)
 	}
 
 	err = dbutil.ScanJSON(rows, urn)
 	if err != nil {
-		return urns.NilURN, errors.Wrapf(err, "error loading contact urn")
+		return urns.NilURN, fmt.Errorf("error loading contact urn: %w", err)
 	}
 
 	return urn.AsURN(oa)
@@ -974,17 +1051,17 @@ func CalculateDynamicGroups(ctx context.Context, db DBorTx, oa *OrgAssets, conta
 
 	err := AddContactsToGroups(ctx, db, groupAdds)
 	if err != nil {
-		return errors.Wrapf(err, "error adding contact to groups")
+		return fmt.Errorf("error adding contact to groups: %w", err)
 	}
 	err = RemoveContactsFromGroups(ctx, db, groupRemoves)
 	if err != nil {
-		return errors.Wrapf(err, "error removing contact from group")
+		return fmt.Errorf("error removing contact from group: %w", err)
 	}
 
 	// clear any unfired campaign events for this contact
 	err = DeleteUnfiredContactEvents(ctx, db, contactIDs)
 	if err != nil {
-		return errors.Wrapf(err, "error deleting unfired events")
+		return fmt.Errorf("error deleting unfired events: %w", err)
 	}
 
 	// for each campaign figure out if we need to be added to any events
@@ -998,7 +1075,7 @@ func CalculateDynamicGroups(ctx context.Context, db DBorTx, oa *OrgAssets, conta
 			for _, contact := range eligibleContacts {
 				scheduled, err := ce.ScheduleForContact(tz, now, contact)
 				if err != nil {
-					return errors.Wrapf(err, "error calculating schedule for event: %d", ce.ID())
+					return fmt.Errorf("error calculating schedule for event: %d: %w", ce.ID(), err)
 				}
 
 				if scheduled != nil {
@@ -1015,61 +1092,11 @@ func CalculateDynamicGroups(ctx context.Context, db DBorTx, oa *OrgAssets, conta
 	// add any event adds
 	err = AddEventFires(ctx, db, fireAdds)
 	if err != nil {
-		return errors.Wrapf(err, "unable to add new event fires for contact")
+		return fmt.Errorf("unable to add new event fires for contact: %w", err)
 	}
 
 	return nil
 }
-
-// StopContact stops the contact with the passed in id, removing them from all groups and setting
-// their state to stopped.
-func StopContact(ctx context.Context, db DBorTx, orgID OrgID, contactID ContactID) error {
-	// delete the contact from all groups
-	_, err := db.ExecContext(ctx, sqlDeleteAllContactGroups, orgID, contactID)
-	if err != nil {
-		return errors.Wrapf(err, "error removing stopped contact from groups")
-	}
-
-	// remove all unfired campaign event fires
-	_, err = db.ExecContext(ctx, sqlDeleteUnfiredEvents, contactID)
-	if err != nil {
-		return errors.Wrapf(err, "error deleting unfired event fires")
-	}
-
-	// remove the contact from any triggers
-	// TODO: this could leave a trigger with no contacts or groups
-	_, err = db.ExecContext(ctx, sqlDeleteAllContactTriggers, contactID)
-	if err != nil {
-		return errors.Wrapf(err, "error removing contact from triggers")
-	}
-
-	// mark as stopped
-	_, err = db.ExecContext(ctx, sqlMarkContactStopped, contactID)
-	if err != nil {
-		return errors.Wrapf(err, "error marking contact as stopped")
-	}
-
-	return nil
-}
-
-const sqlDeleteAllContactGroups = `
-DELETE FROM contacts_contactgroup_contacts
-      WHERE contact_id = $2 AND contactgroup_id = ANY(
-		  SELECT id from contacts_contactgroup WHERE org_id = $1 and group_type IN ('M', 'Q')
-	  )`
-
-const sqlDeleteAllContactTriggers = `
-DELETE FROM triggers_trigger_contacts
-      WHERE contact_id = $1`
-
-const sqlDeleteUnfiredEvents = `
-DELETE FROM campaigns_eventfire
-      WHERE contact_id = $1 AND fired IS NULL`
-
-const sqlMarkContactStopped = `
-UPDATE contacts_contact
-   SET status = 'S', modified_on = NOW()
- WHERE id = $1`
 
 const sqlSelectURNsByID = `
 SELECT id, org_id, contact_id, identity, priority, scheme, path, display, auth_tokens, channel_id 
@@ -1080,7 +1107,7 @@ SELECT id, org_id, contact_id, identity, priority, scheme, path, display, auth_t
 func LoadContactURNs(ctx context.Context, db DBorTx, ids []URNID) ([]*ContactURN, error) {
 	rows, err := db.QueryxContext(ctx, sqlSelectURNsByID, pq.Array(ids))
 	if err != nil {
-		return nil, errors.Wrapf(err, "error querying URNs")
+		return nil, fmt.Errorf("error querying URNs: %w", err)
 	}
 	defer rows.Close()
 
@@ -1089,7 +1116,7 @@ func LoadContactURNs(ctx context.Context, db DBorTx, ids []URNID) ([]*ContactURN
 		u := &ContactURN{}
 		err = rows.StructScan(&u)
 		if err != nil {
-			return nil, errors.Wrap(err, "error scanning URN row")
+			return nil, fmt.Errorf("error scanning URN row: %w", err)
 		}
 		urns = append(urns, u)
 	}
@@ -1142,14 +1169,14 @@ func GetURNID(urn urns.URN) URNID {
 func updateURNChannel(urn urns.URN, channel *Channel) (urns.URN, error) {
 	query, err := urn.Query()
 	if err != nil {
-		return urns.NilURN, errors.Errorf("error parsing query from URN: %s", urn)
+		return urns.NilURN, fmt.Errorf("error parsing query from URN: %s", urn)
 	}
 	if channel != nil {
 		query["channel"] = []string{string(channel.UUID())}
 	}
-	urn, err = urns.NewURNFromParts(urn.Scheme(), urn.Path(), query.Encode(), urn.Display())
+	urn, err = urns.NewFromParts(urn.Scheme(), urn.Path(), query, urn.Display())
 	if err != nil {
-		return urns.NilURN, errors.Wrap(err, "unable to create new urn")
+		return urns.NilURN, fmt.Errorf("unable to create new urn: %w", err)
 	}
 
 	return urn, nil
@@ -1160,7 +1187,7 @@ func UpdateContactModifiedOn(ctx context.Context, db DBorTx, contactIDs []Contac
 	for _, idBatch := range ChunkSlice(contactIDs, 100) {
 		_, err := db.ExecContext(ctx, `UPDATE contacts_contact SET modified_on = NOW() WHERE id = ANY($1)`, pq.Array(idBatch))
 		if err != nil {
-			return errors.Wrap(err, "error updating modified_on for contact batch")
+			return fmt.Errorf("error updating modified_on for contact batch: %w", err)
 		}
 	}
 	return nil
@@ -1233,7 +1260,7 @@ func UpdateContactURNs(ctx context.Context, db DBorTx, oa *OrgAssets, changes []
 	// first update existing URNs
 	err := BulkQuery(ctx, "updating contact urns", db, sqlUpdateContactURNs, updates)
 	if err != nil {
-		return errors.Wrapf(err, "error updating urns")
+		return fmt.Errorf("error updating urns: %w", err)
 	}
 
 	// then detach any URNs that weren't updated (the ones we're not keeping)
@@ -1244,21 +1271,21 @@ func UpdateContactURNs(ctx context.Context, db DBorTx, oa *OrgAssets, changes []
 		pq.Array(updatedURNIDs),
 	)
 	if err != nil {
-		return errors.Wrapf(err, "error detaching urns")
+		return fmt.Errorf("error detaching urns: %w", err)
 	}
 
 	if len(inserts) > 0 {
 		// find the unique ids of the contacts that may be affected by our URN inserts
 		orphanedIDs, err := queryContactIDs(ctx, db, `SELECT contact_id FROM contacts_contacturn WHERE identity = ANY($1) AND org_id = $2 AND contact_id IS NOT NULL`, pq.Array(identities), oa.OrgID())
 		if err != nil {
-			return errors.Wrapf(err, "error finding contacts for URNs")
+			return fmt.Errorf("error finding contacts for URNs: %w", err)
 		}
 
 		// then insert new urns, we do these one by one since we have to deal with conflicts
 		for _, insert := range inserts {
 			_, err := db.NamedExecContext(ctx, sqlInsertContactURN, insert)
 			if err != nil {
-				return errors.Wrapf(err, "error inserting new urns")
+				return fmt.Errorf("error inserting new urns: %w", err)
 			}
 		}
 
@@ -1266,7 +1293,7 @@ func UpdateContactURNs(ctx context.Context, db DBorTx, oa *OrgAssets, changes []
 		if len(orphanedIDs) > 0 {
 			err := UpdateContactModifiedOn(ctx, db, orphanedIDs)
 			if err != nil {
-				return errors.Wrapf(err, "error updating orphaned contacts")
+				return fmt.Errorf("error updating orphaned contacts: %w", err)
 			}
 		}
 	}
@@ -1345,7 +1372,7 @@ func UpdateContactStatus(ctx context.Context, db DBorTx, changes []*ContactStatu
 	for _, ch := range changes {
 		blocked := ch.Status == flows.ContactStatusBlocked
 		stopped := ch.Status == flows.ContactStatusStopped
-		status := contactToModelStatus[ch.Status]
+		status := ContactToModelStatus[ch.Status]
 
 		if blocked || stopped {
 			archiveTriggersForContactIDs = append(archiveTriggersForContactIDs, ch.ContactID)
@@ -1363,13 +1390,13 @@ func UpdateContactStatus(ctx context.Context, db DBorTx, changes []*ContactStatu
 
 	err := ArchiveContactTriggers(ctx, db, archiveTriggersForContactIDs)
 	if err != nil {
-		return errors.Wrapf(err, "error archiving triggers for blocked or stopped contacts")
+		return fmt.Errorf("error archiving triggers for blocked or stopped contacts: %w", err)
 	}
 
 	// do our status update
 	err = BulkQuery(ctx, "updating contact statuses", db, sqlUpdateContactStatus, statusUpdates)
 	if err != nil {
-		return errors.Wrapf(err, "error updating contact statuses")
+		return fmt.Errorf("error updating contact statuses: %w", err)
 	}
 
 	return err
@@ -1410,7 +1437,7 @@ func LockContacts(ctx context.Context, rt *runtime.Runtime, orgID OrgID, ids []C
 
 		lock, err := locker.Grab(rt.RP, retry)
 		if err != nil {
-			return nil, nil, errors.Wrapf(err, "error attempting to grab lock")
+			return nil, nil, fmt.Errorf("error attempting to grab lock: %w", err)
 		}
 
 		// no error but we didn't get the lock

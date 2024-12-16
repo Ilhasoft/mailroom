@@ -6,12 +6,27 @@ import (
 	"github.com/nyaruka/mailroom/testsuite"
 )
 
-func TestServer(t *testing.T) {
+func TestChangeLanguage(t *testing.T) {
 	ctx, rt := testsuite.Runtime()
 
 	testsuite.RunWebTests(t, ctx, rt, "testdata/change_language.json", nil)
+}
+
+func TestClone(t *testing.T) {
+	ctx, rt := testsuite.Runtime()
+
 	testsuite.RunWebTests(t, ctx, rt, "testdata/clone.json", nil)
+}
+
+func TestInspect(t *testing.T) {
+	ctx, rt := testsuite.Runtime()
+
 	testsuite.RunWebTests(t, ctx, rt, "testdata/inspect.json", nil)
+}
+
+func TestMigrate(t *testing.T) {
+	ctx, rt := testsuite.Runtime()
+
 	testsuite.RunWebTests(t, ctx, rt, "testdata/migrate.json", nil)
 }
 

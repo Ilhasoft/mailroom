@@ -1,3 +1,7 @@
+1.4.19-mailroom-9.2.2
+----------
+ * update mailroom to 9.2.2 
+
 1.4.19-mailroom-9.0.1
 ----------
  * update mailroom to 9.0.1 

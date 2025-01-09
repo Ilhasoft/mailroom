@@ -150,7 +150,8 @@
         },
         "status": 422,
         "response": {
-            "error": "unable to clone flow: unable to read node: field 'uuid' is required"
+            "error": "unable to read node: field 'uuid' is required",
+            "code": "flow:invalid"
         }
     },
     {

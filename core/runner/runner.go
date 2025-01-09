@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -15,7 +16,6 @@ import (
 	"github.com/nyaruka/mailroom/core/goflow"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
 	"golang.org/x/exp/maps"
 )
 
@@ -58,13 +58,13 @@ func ResumeFlow(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, 
 			slog.Error("unable to find flow for resume", "contact_uuid", session.Contact().UUID(), "session_uuid", session.UUID(), "flow_id", session.CurrentFlowID())
 			return nil, models.ExitSessions(ctx, rt.DB, []models.SessionID{session.ID()}, models.SessionStatusFailed)
 		}
-		return nil, errors.Wrapf(err, "error loading session flow: %d", session.CurrentFlowID())
+		return nil, fmt.Errorf("error loading session flow: %d: %w", session.CurrentFlowID(), err)
 	}
 
 	// build our flow session
-	fs, err := session.FlowSession(rt.Config, sa, oa.Env())
+	fs, err := session.FlowSession(ctx, rt, sa, oa.Env())
 	if err != nil {
-		return nil, errors.Wrapf(err, "unable to create session from output")
+		return nil, fmt.Errorf("unable to create session from output: %w", err)
 	}
 
 	// resume our session
@@ -72,7 +72,7 @@ func ResumeFlow(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, 
 
 	// had a problem resuming our flow? bail
 	if err != nil {
-		return nil, errors.Wrapf(err, "error resuming flow")
+		return nil, fmt.Errorf("error resuming flow: %w", err)
 	}
 
 	// write our updated session, applying any events in the process
@@ -81,21 +81,21 @@ func ResumeFlow(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, 
 
 	tx, err := rt.DB.BeginTxx(txCTX, nil)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error starting transaction")
+		return nil, fmt.Errorf("error starting transaction: %w", err)
 	}
 
 	// write our updated session and runs
 	err = session.Update(txCTX, rt, tx, oa, fs, sprint, contact, hook)
 	if err != nil {
 		tx.Rollback()
-		return nil, errors.Wrapf(err, "error updating session for resume")
+		return nil, fmt.Errorf("error updating session for resume: %w", err)
 	}
 
 	// commit at once
 	err = tx.Commit()
 	if err != nil {
 		tx.Rollback()
-		return nil, errors.Wrapf(err, "error committing resumption of flow")
+		return nil, fmt.Errorf("error committing resumption of flow: %w", err)
 	}
 
 	// now take care of any post-commit hooks
@@ -104,7 +104,7 @@ func ResumeFlow(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, 
 
 	tx, err = rt.DB.BeginTxx(txCTX, nil)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error starting transaction for post commit hooks")
+		return nil, fmt.Errorf("error starting transaction for post commit hooks: %w", err)
 	}
 
 	err = models.ApplyEventPostCommitHooks(txCTX, rt, tx, oa, []*models.Scene{session.Scene()})
@@ -114,7 +114,7 @@ func ResumeFlow(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, 
 
 	if err != nil {
 		tx.Rollback()
-		return nil, errors.Wrapf(err, "error committing session changes on resume")
+		return nil, fmt.Errorf("error committing session changes on resume: %w", err)
 	}
 
 	slog.Info("resumed session", "contact_uuid", resume.Contact().UUID(), "session_uuid", session.UUID(), "resume_type", resume.Type(), "elapsed", time.Since(start))
@@ -122,7 +122,7 @@ func ResumeFlow(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, 
 }
 
 // StartFlowBatch starts the flow for the passed in org, contacts and flow
-func StartFlowBatch(ctx context.Context, rt *runtime.Runtime, batch *models.FlowStartBatch) ([]*models.Session, error) {
+func StartFlowBatch(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, batch *models.FlowStartBatch) ([]*models.Session, error) {
 	start := time.Now()
 
 	// if this is our last start, no matter what try to set the start as complete as a last step
@@ -135,12 +135,6 @@ func StartFlowBatch(ctx context.Context, rt *runtime.Runtime, batch *models.Flow
 		}()
 	}
 
-	// create our org assets
-	oa, err := models.GetOrgAssets(ctx, rt, batch.OrgID)
-	if err != nil {
-		return nil, errors.Wrapf(err, "error creating assets for org: %d", batch.OrgID)
-	}
-
 	// try to load our flow
 	flow, err := oa.FlowByID(batch.FlowID)
 	if err == models.ErrNotFound {
@@ -148,7 +142,7 @@ func StartFlowBatch(ctx context.Context, rt *runtime.Runtime, batch *models.Flow
 		return nil, nil
 	}
 	if err != nil {
-		return nil, errors.Wrapf(err, "error loading campaign flow: %d", batch.FlowID)
+		return nil, fmt.Errorf("error loading campaign flow: %d: %w", batch.FlowID, err)
 	}
 
 	// get the user that created this flow start if there was one
@@ -164,7 +158,7 @@ func StartFlowBatch(ctx context.Context, rt *runtime.Runtime, batch *models.Flow
 	if !batch.Params.IsNull() {
 		params, err = types.ReadXObject(batch.Params)
 		if err != nil {
-			return nil, errors.Wrap(err, "unable to read JSON from flow start params")
+			return nil, fmt.Errorf("unable to read JSON from flow start params: %w", err)
 		}
 	}
 
@@ -172,7 +166,7 @@ func StartFlowBatch(ctx context.Context, rt *runtime.Runtime, batch *models.Flow
 	if !batch.SessionHistory.IsNull() {
 		history, err = models.ReadSessionHistory(batch.SessionHistory)
 		if err != nil {
-			return nil, errors.Wrap(err, "unable to read JSON from flow start history")
+			return nil, fmt.Errorf("unable to read JSON from flow start history: %w", err)
 		}
 	}
 
@@ -218,7 +212,7 @@ func StartFlowBatch(ctx context.Context, rt *runtime.Runtime, batch *models.Flow
 
 	sessions, err := StartFlow(ctx, rt, oa, flow, batch.ContactIDs, options)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error starting flow batch")
+		return nil, fmt.Errorf("error starting flow batch: %w", err)
 	}
 
 	// log both our total and average
@@ -278,7 +272,7 @@ func tryToStartWithLock(ctx context.Context, rt *runtime.Runtime, oa *models.Org
 	// load our locked contacts
 	contacts, err := models.LoadContacts(ctx, rt.ReadonlyDB, oa, locked)
 	if err != nil {
-		return nil, nil, errors.Wrapf(err, "error loading contacts to start")
+		return nil, nil, fmt.Errorf("error loading contacts to start: %w", err)
 	}
 
 	// build our triggers
@@ -286,7 +280,7 @@ func tryToStartWithLock(ctx context.Context, rt *runtime.Runtime, oa *models.Org
 	for _, c := range contacts {
 		contact, err := c.FlowContact(oa)
 		if err != nil {
-			return nil, nil, errors.Wrapf(err, "error creating flow contact")
+			return nil, nil, fmt.Errorf("error creating flow contact: %w", err)
 		}
 		trigger := options.TriggerBuilder(contact)
 		triggers = append(triggers, trigger)
@@ -294,7 +288,7 @@ func tryToStartWithLock(ctx context.Context, rt *runtime.Runtime, oa *models.Org
 
 	ss, err := StartFlowForContacts(ctx, rt, oa, flow, contacts, triggers, options.CommitHook, options.Interrupt)
 	if err != nil {
-		return nil, nil, errors.Wrapf(err, "error starting flow for contacts")
+		return nil, nil, fmt.Errorf("error starting flow for contacts: %w", err)
 	}
 
 	return ss, skipped, nil
@@ -323,7 +317,7 @@ func StartFlowForContacts(
 		log := log.With("contact_uuid", trigger.Contact().UUID())
 		start := time.Now()
 
-		session, sprint, err := goflow.Engine(rt.Config).NewSession(sa, trigger)
+		session, sprint, err := goflow.Engine(rt).NewSession(sa, trigger)
 		if err != nil {
 			log.Error("error starting flow", "error", err)
 			continue
@@ -345,7 +339,7 @@ func StartFlowForContacts(
 
 	tx, err := rt.DB.BeginTxx(txCTX, nil)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error starting transaction")
+		return nil, fmt.Errorf("error starting transaction: %w", err)
 	}
 
 	// build our list of contact ids
@@ -359,7 +353,7 @@ func StartFlowForContacts(
 		err = models.InterruptSessionsForContactsTx(txCTX, tx, contactIDs)
 		if err != nil {
 			tx.Rollback()
-			return nil, errors.Wrap(err, "error interrupting contacts")
+			return nil, fmt.Errorf("error interrupting contacts: %w", err)
 		}
 	}
 
@@ -392,7 +386,7 @@ func StartFlowForContacts(
 
 			tx, err := rt.DB.BeginTxx(txCTX, nil)
 			if err != nil {
-				return nil, errors.Wrapf(err, "error starting transaction for retry")
+				return nil, fmt.Errorf("error starting transaction for retry: %w", err)
 			}
 
 			// interrupt this contact if appropriate
@@ -429,7 +423,7 @@ func StartFlowForContacts(
 
 	tx, err = rt.DB.BeginTxx(txCTX, nil)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error starting transaction for post commit hooks")
+		return nil, fmt.Errorf("error starting transaction for post commit hooks: %w", err)
 	}
 
 	scenes := make([]*models.Scene, 0, len(triggers))

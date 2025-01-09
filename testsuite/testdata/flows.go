@@ -7,8 +7,10 @@ import (
 	"github.com/buger/jsonparser"
 	"github.com/nyaruka/gocommon/uuids"
 	"github.com/nyaruka/goflow/assets"
+	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
+	"github.com/nyaruka/null/v3"
 )
 
 type Flow struct {
@@ -122,7 +124,7 @@ func InsertWaitingSession(rt *runtime.Runtime, org *Org, contact *Contact, sessi
 }
 
 // InsertFlowRun inserts a flow run
-func InsertFlowRun(rt *runtime.Runtime, org *Org, sessionID models.SessionID, contact *Contact, flow *Flow, status models.RunStatus) models.FlowRunID {
+func InsertFlowRun(rt *runtime.Runtime, org *Org, sessionID models.SessionID, contact *Contact, flow *Flow, status models.RunStatus, currentNodeUUID flows.NodeUUID) models.FlowRunID {
 	now := time.Now()
 
 	var exitedOn *time.Time
@@ -132,8 +134,8 @@ func InsertFlowRun(rt *runtime.Runtime, org *Org, sessionID models.SessionID, co
 
 	var id models.FlowRunID
 	must(rt.DB.Get(&id,
-		`INSERT INTO flows_flowrun(uuid, org_id, session_id, contact_id, flow_id, status, responded, created_on, modified_on, exited_on) 
-		 VALUES($1, $2, $3, $4, $5, $6, TRUE, NOW(), NOW(), $7) RETURNING id`, uuids.New(), org.ID, sessionID, contact.ID, flow.ID, status, exitedOn,
+		`INSERT INTO flows_flowrun(uuid, org_id, session_id, contact_id, flow_id, status, responded, current_node_uuid, created_on, modified_on, exited_on) 
+		 VALUES($1, $2, $3, $4, $5, $6, TRUE, $7, NOW(), NOW(), $8) RETURNING id`, uuids.New(), org.ID, sessionID, contact.ID, flow.ID, status, null.String(currentNodeUUID), exitedOn,
 	))
 	return id
 }

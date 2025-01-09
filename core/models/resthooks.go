@@ -3,10 +3,10 @@ package models
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/nyaruka/goflow/assets"
-	"github.com/pkg/errors"
 )
 
 // ResthookID is our type for the database id of a resthook
@@ -32,7 +32,7 @@ func (r *Resthook) Subscribers() []string { return r.Subscribers_ }
 func loadResthooks(ctx context.Context, db *sql.DB, orgID OrgID) ([]assets.Resthook, error) {
 	rows, err := db.QueryContext(ctx, sqlSelectResthooksByOrg, orgID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error querying resthooks for org: %d", orgID)
+		return nil, fmt.Errorf("error querying resthooks for org: %d: %w", orgID, err)
 	}
 
 	return ScanJSONRows(rows, func() assets.Resthook { return &Resthook{} })
@@ -51,7 +51,10 @@ SELECT ROW_TO_JSON(r) FROM (
 // UnsubscribeResthooks unsubscribles all the resthooks passed in
 func UnsubscribeResthooks(ctx context.Context, tx *sqlx.Tx, unsubs []*ResthookUnsubscribe) error {
 	err := BulkQuery(ctx, "unsubscribing resthooks", tx, sqlUnsubscribeResthooks, unsubs)
-	return errors.Wrapf(err, "error unsubscribing from resthooks")
+	if err != nil {
+		return fmt.Errorf("error unsubscribing from resthooks: %w", err)
+	}
+	return nil
 }
 
 type ResthookUnsubscribe struct {

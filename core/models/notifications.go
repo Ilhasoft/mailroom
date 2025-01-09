@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/nyaruka/gocommon/dbutil"
-	"github.com/pkg/errors"
 )
 
 // NotificationID is our type for notification ids
@@ -155,7 +154,10 @@ INSERT INTO notifications_notification(org_id,  notification_type,  scope,  user
 
 func insertNotifications(ctx context.Context, db DBorTx, notifications []*Notification) error {
 	err := dbutil.BulkQuery(ctx, db, insertNotificationSQL, notifications)
-	return errors.Wrap(err, "error inserting notifications")
+	if err != nil {
+		return fmt.Errorf("error inserting notifications: %w", err)
+	}
+	return nil
 }
 
 func usersWithRoles(oa *OrgAssets, roles []UserRole) []*User {

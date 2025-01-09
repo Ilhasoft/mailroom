@@ -2,12 +2,12 @@ package hooks
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/pkg/errors"
 )
 
 // InsertTicketsHook is our hook for inserting tickets
@@ -29,7 +29,7 @@ func (h *insertTicketsHook) Apply(ctx context.Context, rt *runtime.Runtime, tx *
 	// insert the tickets
 	err := models.InsertTickets(ctx, tx, oa, tickets)
 	if err != nil {
-		return errors.Wrapf(err, "error inserting tickets")
+		return fmt.Errorf("error inserting tickets: %w", err)
 	}
 
 	// generate opened events for each ticket
@@ -44,13 +44,13 @@ func (h *insertTicketsHook) Apply(ctx context.Context, rt *runtime.Runtime, tx *
 	// and insert those too
 	err = models.InsertTicketEvents(ctx, tx, openEvents)
 	if err != nil {
-		return errors.Wrapf(err, "error inserting ticket opened events")
+		return fmt.Errorf("error inserting ticket opened events: %w", err)
 	}
 
 	// and insert logs/notifications for those
 	err = models.NotificationsFromTicketEvents(ctx, tx, oa, eventsByTicket)
 	if err != nil {
-		return errors.Wrapf(err, "error inserting notifications")
+		return fmt.Errorf("error inserting notifications: %w", err)
 	}
 
 	return nil

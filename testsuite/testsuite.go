@@ -8,13 +8,15 @@ import (
 	"os/exec"
 	"path"
 
+	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/gomodule/redigo/redis"
 	"github.com/jmoiron/sqlx"
 	"github.com/nyaruka/gocommon/storage"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/nyaruka/rp-indexer/v8/indexers"
-	"github.com/olivere/elastic/v7"
+	"github.com/nyaruka/redisx/assertredis"
+	"github.com/nyaruka/rp-indexer/v9/indexers"
+	"golang.org/x/exp/maps"
 )
 
 var _db *sqlx.DB
@@ -64,27 +66,24 @@ func Reset(what ResetFlag) {
 
 // Runtime returns the various runtime things a test might need
 func Runtime() (context.Context, *runtime.Runtime) {
-	es, err := elastic.NewSimpleClient(elastic.SetURL(elasticURL), elastic.SetSniff(false))
-	if err != nil {
-		panic(err)
-	}
-
 	cfg := runtime.NewDefaultConfig()
 	cfg.ElasticContactsIndex = elasticContactsIndex
+	cfg.Port = 8091
 
 	dbx := getDB()
 	rt := &runtime.Runtime{
 		DB:                dbx,
 		ReadonlyDB:        dbx.DB,
 		RP:                getRP(),
-		ES:                es,
+		ES:                getES(),
+		FCM:               &MockFCMClient{ValidTokens: []string{"FCMID3", "FCMID4", "FCMID5"}},
 		AttachmentStorage: storage.NewFS(attachmentStorageDir, 0766),
 		SessionStorage:    storage.NewFS(sessionStorageDir, 0766),
 		LogStorage:        storage.NewFS(logStorageDir, 0766),
 		Config:            cfg,
 	}
 
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	return context.Background(), rt
 }
@@ -97,7 +96,8 @@ func ReindexElastic(ctx context.Context) {
 	contactsIndexer := indexers.NewContactIndexer(elasticURL, elasticContactsIndex, 1, 1, 100)
 	contactsIndexer.Index(db.DB, false, false)
 
-	es.Refresh(elasticContactsIndex).Do(ctx)
+	_, err := es.Indices.Refresh().Index(elasticContactsIndex).Do(ctx)
+	noError(err)
 }
 
 // returns an open test database pool
@@ -117,16 +117,7 @@ func getDB() *sqlx.DB {
 
 // returns a redis pool to our test database
 func getRP() *redis.Pool {
-	return &redis.Pool{
-		Dial: func() (redis.Conn, error) {
-			conn, err := redis.Dial("tcp", "localhost:6379")
-			if err != nil {
-				return nil, err
-			}
-			_, err = conn.Do("SELECT", 0)
-			return conn, err
-		},
-	}
+	return assertredis.TestDB()
 }
 
 // returns a redis connection, Close() should be called on it when done
@@ -139,8 +130,8 @@ func getRC() redis.Conn {
 }
 
 // returns an Elastic client
-func getES() *elastic.Client {
-	es, err := elastic.NewSimpleClient(elastic.SetURL(elasticURL), elastic.SetSniff(false))
+func getES() *elasticsearch.TypedClient {
+	es, err := elasticsearch.NewTypedClient(elasticsearch.Config{Addresses: []string{elasticURL}})
 	noError(err)
 	return es
 }
@@ -187,25 +178,17 @@ func absPath(p string) string {
 	// start in working directory and go up until we are in a directory containing go.mod
 	dir, _ := os.Getwd()
 	for dir != "/" {
-		dir = path.Dir(dir)
 		if _, err := os.Stat(path.Join(dir, "go.mod")); err == nil {
 			break
 		}
+		dir = path.Dir(dir)
 	}
 	return path.Join(dir, p)
 }
 
 // resets our redis database
 func resetRedis() {
-	rc, err := redis.Dial("tcp", "localhost:6379")
-	if err != nil {
-		panic(fmt.Sprintf("error connecting to redis db: %s", err.Error()))
-	}
-	rc.Do("SELECT", 0)
-	_, err = rc.Do("FLUSHDB")
-	if err != nil {
-		panic(fmt.Sprintf("error flushing redis db: %s", err.Error()))
-	}
+	assertredis.FlushDB()
 }
 
 // clears our storage for tests
@@ -219,17 +202,17 @@ func resetStorage() {
 func resetElastic(ctx context.Context) {
 	es := getES()
 
-	exists, err := es.IndexExists(elasticContactsIndex).Do(ctx)
+	exists, err := es.Indices.ExistsAlias(elasticContactsIndex).Do(ctx)
 	noError(err)
 
 	if exists {
 		// get any indexes for the contacts alias
-		ar, err := es.Aliases().Index(elasticContactsIndex).Do(ctx)
+		ar, err := es.Indices.GetAlias().Name(elasticContactsIndex).Do(ctx)
 		noError(err)
 
 		// and delete them
-		for _, index := range ar.IndicesByAlias(elasticContactsIndex) {
-			_, err := es.DeleteIndex(index).Do(ctx)
+		for _, index := range maps.Keys(ar) {
+			_, err := es.Indices.Delete(index).Do(ctx)
 			noError(err)
 		}
 	}
@@ -252,7 +235,9 @@ DELETE FROM triggers_trigger_contacts WHERE trigger_id >= 30000;
 DELETE FROM triggers_trigger_groups WHERE trigger_id >= 30000;
 DELETE FROM triggers_trigger_exclude_groups WHERE trigger_id >= 30000;
 DELETE FROM triggers_trigger WHERE id >= 30000;
+DELETE FROM channels_channel WHERE id >= 30000;
 DELETE FROM channels_channelcount;
+DELETE FROM channels_channelevent;
 DELETE FROM msgs_msg;
 DELETE FROM flows_flowrun;
 DELETE FROM flows_flowpathcount;
@@ -274,6 +259,8 @@ DELETE FROM msgs_broadcast_contacts;
 DELETE FROM msgs_broadcastmsgcount;
 DELETE FROM msgs_broadcast;
 DELETE FROM msgs_optin;
+DELETE FROM templates_templatetranslation WHERE id >= 30000;
+DELETE FROM templates_template WHERE id >= 30000;
 DELETE FROM schedules_schedule;
 DELETE FROM campaigns_campaignevent WHERE id >= 30000;
 DELETE FROM campaigns_campaign WHERE id >= 30000;
@@ -287,6 +274,7 @@ DELETE FROM contacts_contactgroup WHERE id >= 30000;
 
 ALTER SEQUENCE flows_flow_id_seq RESTART WITH 30000;
 ALTER SEQUENCE tickets_ticket_id_seq RESTART WITH 1;
+ALTER SEQUENCE channels_channelevent_id_seq RESTART WITH 1;
 ALTER SEQUENCE msgs_msg_id_seq RESTART WITH 1;
 ALTER SEQUENCE msgs_broadcast_id_seq RESTART WITH 1;
 ALTER SEQUENCE flows_flowrun_id_seq RESTART WITH 1;

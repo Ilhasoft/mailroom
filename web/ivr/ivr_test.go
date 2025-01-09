@@ -18,7 +18,6 @@ import (
 	"github.com/nyaruka/goflow/test"
 	_ "github.com/nyaruka/mailroom/core/handlers"
 	"github.com/nyaruka/mailroom/core/models"
-	"github.com/nyaruka/mailroom/core/queue"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/core/tasks/starts"
 	"github.com/nyaruka/mailroom/runtime"
@@ -26,6 +25,7 @@ import (
 	"github.com/nyaruka/mailroom/services/ivr/vonage"
 	"github.com/nyaruka/mailroom/testsuite"
 	"github.com/nyaruka/mailroom/testsuite/testdata"
+	"github.com/nyaruka/mailroom/utils/queues"
 	"github.com/nyaruka/mailroom/web"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -75,7 +75,7 @@ func TestTwilioIVR(t *testing.T) {
 	defer server.Stop()
 
 	// set callback domain and enable machine detection
-	rt.DB.MustExec(`UPDATE channels_channel SET config = config || '{"callback_domain": "localhost:8090", "machine_detection": true}'::jsonb WHERE id = $1`, testdata.TwilioChannel.ID)
+	rt.DB.MustExec(`UPDATE channels_channel SET config = config || '{"callback_domain": "localhost:8091", "machine_detection": true}'::jsonb WHERE id = $1`, testdata.TwilioChannel.ID)
 
 	// create a flow start for cathy bob, and george
 	parentSummary := json.RawMessage(`{
@@ -101,7 +101,7 @@ func TestTwilioIVR(t *testing.T) {
 	err := models.InsertFlowStarts(ctx, rt.DB, []*models.FlowStart{start})
 	require.NoError(t, err)
 
-	err = tasks.Queue(rc, queue.BatchQueue, testdata.Org1.ID, &starts.StartFlowTask{FlowStart: start}, queue.DefaultPriority)
+	err = tasks.Queue(rc, tasks.BatchQueue, testdata.Org1.ID, &starts.StartFlowTask{FlowStart: start}, queues.DefaultPriority)
 	require.NoError(t, err)
 
 	testsuite.FlushTasks(t, rt)
@@ -290,7 +290,7 @@ func TestTwilioIVR(t *testing.T) {
 	}
 
 	for i, tc := range tcs {
-		mrUrl := "http://localhost:8090/mr" + tc.url
+		mrUrl := "http://localhost:8091/mr" + tc.url
 
 		req, err := http.NewRequest(http.MethodPost, mrUrl, strings.NewReader(tc.form.Encode()))
 		assert.NoError(t, err)
@@ -382,7 +382,7 @@ func TestVonageIVR(t *testing.T) {
 	rt.DB.MustExec(`UPDATE channels_channel SET is_active = FALSE WHERE id = $1`, testdata.TwilioChannel.ID)
 
 	// update callback domain and role
-	rt.DB.MustExec(`UPDATE channels_channel SET config = config || '{"callback_domain": "localhost:8090"}'::jsonb, role='SRCA' WHERE id = $1`, testdata.VonageChannel.ID)
+	rt.DB.MustExec(`UPDATE channels_channel SET config = config || '{"callback_domain": "localhost:8091"}'::jsonb, role='SRCA' WHERE id = $1`, testdata.VonageChannel.ID)
 
 	// start test server
 	ts := httptest.NewServer(http.HandlerFunc(mockVonageHandler))
@@ -407,7 +407,7 @@ func TestVonageIVR(t *testing.T) {
 	assertdb.Query(t, rt.DB, `SELECT COUNT(*) FROM flows_flowstart`).Returns(1)
 	assertdb.Query(t, rt.DB, `SELECT COUNT(*) FROM flows_flowstart WHERE params ->> 'ref_id' = '123'`).Returns(1)
 
-	err = tasks.Queue(rc, queue.BatchQueue, testdata.Org1.ID, &starts.StartFlowTask{FlowStart: start}, queue.DefaultPriority)
+	err = tasks.Queue(rc, tasks.BatchQueue, testdata.Org1.ID, &starts.StartFlowTask{FlowStart: start}, queues.DefaultPriority)
 	require.NoError(t, err)
 
 	testsuite.FlushTasks(t, rt)
@@ -441,7 +441,7 @@ func TestVonageIVR(t *testing.T) {
 					"action": "input",
 					"eventMethod": "POST",
 					"eventUrl": [
-						"https://localhost:8090/mr/ivr/c/19012bfd-3ce3-4cae-9bb9-76cf92c73d49/handle?action=resume&connection=1&urn=tel%3A%2B16055741111%3Fid%3D10000&wait_type=gather&sig=0znh%2FxV9L0OD0ITKr6%2FDfpbNbXE%3D"
+						"https://localhost:8091/mr/ivr/c/19012bfd-3ce3-4cae-9bb9-76cf92c73d49/handle?action=resume&connection=1&urn=tel%3A%2B16055741111%3Fid%3D10000&wait_type=gather&sig=9ih6a8QBjAq00QXkqAQTvFuqNqM%3D"
 					],
 					"maxDigits": 1,
 					"submitOnHash": true,
@@ -533,7 +533,7 @@ func TestVonageIVR(t *testing.T) {
 					"action": "input",
 					"eventMethod": "POST",
 					"eventUrl": [
-						"https://localhost:8090/mr/ivr/c/19012bfd-3ce3-4cae-9bb9-76cf92c73d49/handle?action=resume&connection=2&urn=tel%3A%2B16055743333%3Fid%3D10002&wait_type=gather&sig=5t5yQU0hZ8%2BWz1qNBDNT%2BRggYJM%3D"
+						"https://localhost:8091/mr/ivr/c/19012bfd-3ce3-4cae-9bb9-76cf92c73d49/handle?action=resume&connection=2&urn=tel%3A%2B16055743333%3Fid%3D10002&wait_type=gather&sig=Y9bUZ8T5CtuY4Tbf9VsmAqEV6sY%3D"
 					],
 					"maxDigits": 1,
 					"submitOnHash": true,
@@ -556,7 +556,7 @@ func TestVonageIVR(t *testing.T) {
 					"action": "input",
 					"eventMethod": "POST",
 					"eventUrl": [
-						"https://localhost:8090/mr/ivr/c/19012bfd-3ce3-4cae-9bb9-76cf92c73d49/handle?action=resume&connection=2&urn=tel%3A%2B16055743333%3Fid%3D10002&wait_type=gather&sig=5t5yQU0hZ8%2BWz1qNBDNT%2BRggYJM%3D"
+						"https://localhost:8091/mr/ivr/c/19012bfd-3ce3-4cae-9bb9-76cf92c73d49/handle?action=resume&connection=2&urn=tel%3A%2B16055743333%3Fid%3D10002&wait_type=gather&sig=Y9bUZ8T5CtuY4Tbf9VsmAqEV6sY%3D"
 					],
 					"maxDigits": 20,
 					"submitOnHash": true,
@@ -588,7 +588,7 @@ func TestVonageIVR(t *testing.T) {
 	}
 
 	for _, tc := range tcs {
-		mrUrl := "http://localhost:8090/mr" + tc.url
+		mrUrl := "http://localhost:8091/mr" + tc.url
 
 		req, err := http.NewRequest(http.MethodPost, mrUrl, strings.NewReader(tc.body))
 		assert.NoError(t, err)

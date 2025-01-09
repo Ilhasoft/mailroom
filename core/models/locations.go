@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -11,7 +12,6 @@ import (
 	"github.com/nyaruka/goflow/envs"
 
 	"github.com/lib/pq"
-	"github.com/pkg/errors"
 )
 
 // Location is our mailroom type for administrative locations
@@ -50,7 +50,7 @@ func loadLocations(ctx context.Context, db *sql.DB, oa *OrgAssets) ([]assets.Loc
 
 	rows, err := db.QueryContext(ctx, loadLocationsSQL, oa.orgID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error querying locations for org: %d", oa.orgID)
+		return nil, fmt.Errorf("error querying locations for org: %d: %w", oa.orgID, err)
 	}
 	defer rows.Close()
 
@@ -65,7 +65,7 @@ func loadLocations(ctx context.Context, db *sql.DB, oa *OrgAssets) ([]assets.Loc
 
 		err := rows.Scan(&location.id, &location.level, &location.osmID, &location.parentID, &location.Name_, pq.Array(&location.Aliases_))
 		if err != nil {
-			return nil, errors.Wrap(err, "error scanning location row")
+			return nil, fmt.Errorf("error scanning location row: %w", err)
 		}
 
 		if location.level > maxLevel {
@@ -90,7 +90,7 @@ func loadLocations(ctx context.Context, db *sql.DB, oa *OrgAssets) ([]assets.Loc
 		if l.parentID != nil {
 			parent, found := locationMap[*l.parentID]
 			if !found {
-				return nil, errors.Errorf("unable to find parent: %d for location: %d", *l.parentID, l.id)
+				return nil, fmt.Errorf("unable to find parent: %d for location: %d", *l.parentID, l.id)
 			}
 			parent.Children_ = append(parent.Children_, l)
 		}
@@ -99,13 +99,13 @@ func loadLocations(ctx context.Context, db *sql.DB, oa *OrgAssets) ([]assets.Loc
 	// ok, encode to json
 	locationJSON, err := json.Marshal(root)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error marshalling json hierarchy")
+		return nil, fmt.Errorf("error marshalling json hierarchy: %w", err)
 	}
 
 	// then read it in
 	hierarchy, err := envs.ReadLocationHierarchy(oa.Env(), locationJSON)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error unmarshalling hierarchy: %s", string(locationJSON))
+		return nil, fmt.Errorf("error unmarshalling hierarchy: %s: %w", string(locationJSON), err)
 	}
 
 	slog.Debug("loaded locations", "elapsed", time.Since(start), "org_id", oa.orgID)

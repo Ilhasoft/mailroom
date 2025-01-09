@@ -2,13 +2,13 @@ package ticket
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/mailroom/web"
-	"github.com/pkg/errors"
 	"golang.org/x/exp/maps"
 )
 
@@ -26,18 +26,18 @@ func init() {
 func handleReopen(ctx context.Context, rt *runtime.Runtime, r *http.Request) (any, int, error) {
 	request := &bulkTicketRequest{}
 	if err := web.ReadAndValidateJSON(r, request); err != nil {
-		return errors.Wrap(err, "request failed validation"), http.StatusBadRequest, nil
+		return fmt.Errorf("request failed validation: %w", err), http.StatusBadRequest, nil
 	}
 
 	// grab our org assets
 	oa, err := models.GetOrgAssets(ctx, rt, request.OrgID)
 	if err != nil {
-		return nil, 0, errors.Wrap(err, "unable to load org assets")
+		return nil, 0, fmt.Errorf("unable to load org assets: %w", err)
 	}
 
 	tickets, err := models.LoadTickets(ctx, rt.DB, request.TicketIDs)
 	if err != nil {
-		return nil, 0, errors.Wrapf(err, "error loading tickets for org: %d", request.OrgID)
+		return nil, 0, fmt.Errorf("error loading tickets for org: %d: %w", request.OrgID, err)
 	}
 
 	// organize last opened ticket by contact (we know we can't open more than one ticket per contact)
@@ -79,7 +79,7 @@ func tryToLockAndReopen(ctx context.Context, rt *runtime.Runtime, oa *models.Org
 	// load our contacts
 	contacts, err := models.LoadContacts(ctx, rt.DB, oa, locked)
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "unable to load contacts")
+		return nil, nil, fmt.Errorf("unable to load contacts: %w", err)
 	}
 
 	// filter tickets to those belonging to contacts without an open ticket
@@ -92,7 +92,7 @@ func tryToLockAndReopen(ctx context.Context, rt *runtime.Runtime, oa *models.Org
 
 	evts, err := models.ReopenTickets(ctx, rt, oa, userID, reopenable)
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "error reopening tickets")
+		return nil, nil, fmt.Errorf("error reopening tickets: %w", err)
 	}
 
 	skippedTickets := make(map[models.ContactID]*models.Ticket, len(skipped))

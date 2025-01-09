@@ -17,13 +17,10 @@
             "org_id": 1,
             "query": "$"
         },
-        "status": 400,
+        "status": 422,
         "response": {
-            "error": "mismatched input '$' expecting {'(', TEXT, STRING}",
-            "code": "unexpected_token",
-            "extra": {
-                "token": "$"
-            }
+            "error": "mismatched input '$' expecting {'(', STRING, PROPERTY, TEXT}",
+            "code": "query:syntax"
         }
     },
     {
@@ -34,10 +31,10 @@
             "org_id": 1,
             "query": "birthday = tomorrow"
         },
-        "status": 400,
+        "status": 422,
         "response": {
             "error": "can't resolve 'birthday' to attribute, scheme or field",
-            "code": "unknown_property",
+            "code": "query:unknown_property",
             "extra": {
                 "property": "birthday"
             }
@@ -54,8 +51,7 @@
         },
         "status": 200,
         "response": {
-            "query": "birthday = \"tomorrow\" AND tel = 12345",
-            "elastic_query": null,
+            "query": "fields.birthday = \"tomorrow\" AND urns.tel = 12345",
             "metadata": {
                 "attributes": [],
                 "schemes": [
@@ -82,195 +78,7 @@
         },
         "status": 200,
         "response": {
-            "query": "age > 10",
-            "elastic_query": {
-                "bool": {
-                    "must": [
-                        {
-                            "term": {
-                                "org_id": 1
-                            }
-                        },
-                        {
-                            "term": {
-                                "is_active": true
-                            }
-                        },
-                        {
-                            "nested": {
-                                "path": "fields",
-                                "query": {
-                                    "bool": {
-                                        "must": [
-                                            {
-                                                "term": {
-                                                    "fields.field": "903f51da-2717-47c7-a0d3-f2f32877013d"
-                                                }
-                                            },
-                                            {
-                                                "range": {
-                                                    "fields.number": {
-                                                        "from": 10,
-                                                        "include_lower": false,
-                                                        "include_upper": true,
-                                                        "to": null
-                                                    }
-                                                }
-                                            }
-                                        ]
-                                    }
-                                }
-                            }
-                        }
-                    ]
-                }
-            },
-            "metadata": {
-                "attributes": [],
-                "schemes": [],
-                "fields": [
-                    {
-                        "key": "age",
-                        "name": "Age"
-                    }
-                ],
-                "groups": [],
-                "allow_as_group": true
-            }
-        }
-    },
-    {
-        "label": "valid query with group by ID",
-        "method": "POST",
-        "path": "/mr/contact/parse_query",
-        "body": {
-            "org_id": 1,
-            "query": "age > 10",
-            "group_id": 10000
-        },
-        "status": 200,
-        "response": {
-            "query": "age > 10",
-            "elastic_query": {
-                "bool": {
-                    "must": [
-                        {
-                            "term": {
-                                "org_id": 1
-                            }
-                        },
-                        {
-                            "term": {
-                                "is_active": true
-                            }
-                        },
-                        {
-                            "term": {
-                                "group_ids": 10000
-                            }
-                        },
-                        {
-                            "nested": {
-                                "path": "fields",
-                                "query": {
-                                    "bool": {
-                                        "must": [
-                                            {
-                                                "term": {
-                                                    "fields.field": "903f51da-2717-47c7-a0d3-f2f32877013d"
-                                                }
-                                            },
-                                            {
-                                                "range": {
-                                                    "fields.number": {
-                                                        "from": 10,
-                                                        "include_lower": false,
-                                                        "include_upper": true,
-                                                        "to": null
-                                                    }
-                                                }
-                                            }
-                                        ]
-                                    }
-                                }
-                            }
-                        }
-                    ]
-                }
-            },
-            "metadata": {
-                "attributes": [],
-                "schemes": [],
-                "fields": [
-                    {
-                        "key": "age",
-                        "name": "Age"
-                    }
-                ],
-                "groups": [],
-                "allow_as_group": true
-            }
-        }
-    },
-    {
-        "label": "valid query with group by UUID",
-        "method": "POST",
-        "path": "/mr/contact/parse_query",
-        "body": {
-            "org_id": 1,
-            "query": "age > 10",
-            "group_uuid": "c153e265-f7c9-4539-9dbc-9b358714b638"
-        },
-        "status": 200,
-        "response": {
-            "query": "age > 10",
-            "elastic_query": {
-                "bool": {
-                    "must": [
-                        {
-                            "term": {
-                                "org_id": 1
-                            }
-                        },
-                        {
-                            "term": {
-                                "is_active": true
-                            }
-                        },
-                        {
-                            "term": {
-                                "group_ids": 10000
-                            }
-                        },
-                        {
-                            "nested": {
-                                "path": "fields",
-                                "query": {
-                                    "bool": {
-                                        "must": [
-                                            {
-                                                "term": {
-                                                    "fields.field": "903f51da-2717-47c7-a0d3-f2f32877013d"
-                                                }
-                                            },
-                                            {
-                                                "range": {
-                                                    "fields.number": {
-                                                        "from": 10,
-                                                        "include_lower": false,
-                                                        "include_upper": true,
-                                                        "to": null
-                                                    }
-                                                }
-                                            }
-                                        ]
-                                    }
-                                }
-                            }
-                        }
-                    ]
-                }
-            },
+            "query": "fields.age > 10",
             "metadata": {
                 "attributes": [],
                 "schemes": [],
@@ -296,27 +104,6 @@
         "status": 200,
         "response": {
             "query": "group = \"Testers\"",
-            "elastic_query": {
-                "bool": {
-                    "must": [
-                        {
-                            "term": {
-                                "org_id": 1
-                            }
-                        },
-                        {
-                            "term": {
-                                "is_active": true
-                            }
-                        },
-                        {
-                            "term": {
-                                "group_ids": 10001
-                            }
-                        }
-                    ]
-                }
-            },
             "metadata": {
                 "attributes": [
                     "group"

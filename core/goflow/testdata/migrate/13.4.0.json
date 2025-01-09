@@ -1,0 +1,39 @@
+{
+    "uuid": "502c3ee4-3249-4dee-8e71-c62070667d52",
+    "name": "New",
+    "spec_version": "13.4.0",
+    "type": "messaging",
+    "language": "und",
+    "nodes": [
+        {
+            "uuid": "d26486b1-193d-4512-85f0-c6db696f1e1c",
+            "actions": [
+                {
+                    "uuid": "82a1de5f-af1a-45ef-8511-4d60c160e486",
+                    "type": "send_msg",
+                    "text": "Hello @webhook.json",
+                    "templating": {
+                        "template": {
+                            "uuid": "641b8b05-082a-497e-bf63-38aa48b1f0c4",
+                            "name": "welcome"
+                        },
+                        "components": [
+                            {
+                                "uuid": "e7187099-7d38-4f60-955c-325957214c42",
+                                "name": "body",
+                                "params": [
+                                    "@contact.name"
+                                ]
+                            }
+                        ]
+                    }
+                }
+            ],
+            "exits": [
+                {
+                    "uuid": "fdd370e0-ffa9-48b3-8148-b9241d74fc72"
+                }
+            ]
+        }
+    ]
+}

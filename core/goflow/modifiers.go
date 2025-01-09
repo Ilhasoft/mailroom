@@ -2,11 +2,11 @@ package goflow
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/nyaruka/goflow/assets"
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/goflow/flows/modifiers"
-	"github.com/pkg/errors"
 )
 
 // MissingAssets is the type for defining missing assets behavior
@@ -29,7 +29,7 @@ func ReadModifiers(sa flows.SessionAssets, data []json.RawMessage, missing Missi
 			continue
 		}
 		if err != nil {
-			return nil, errors.Wrapf(err, "error reading modifier: %s", string(m))
+			return nil, fmt.Errorf("error reading modifier: %s: %w", string(m), err)
 		}
 		mods = append(mods, mod)
 	}

@@ -2,12 +2,12 @@ package ticket
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/mailroom/web"
-	"github.com/pkg/errors"
 )
 
 func init() {
@@ -31,17 +31,17 @@ type addNoteRequest struct {
 func handleAddNote(ctx context.Context, rt *runtime.Runtime, r *addNoteRequest) (any, int, error) {
 	oa, err := models.GetOrgAssets(ctx, rt, r.OrgID)
 	if err != nil {
-		return nil, 0, errors.Wrap(err, "unable to load org assets")
+		return nil, 0, fmt.Errorf("unable to load org assets: %w", err)
 	}
 
 	tickets, err := models.LoadTickets(ctx, rt.DB, r.TicketIDs)
 	if err != nil {
-		return nil, 0, errors.Wrapf(err, "error loading tickets for org: %d", r.OrgID)
+		return nil, 0, fmt.Errorf("error loading tickets for org: %d: %w", r.OrgID, err)
 	}
 
 	evts, err := models.TicketsAddNote(ctx, rt.DB, oa, r.UserID, tickets, r.Note)
 	if err != nil {
-		return nil, 0, errors.Wrap(err, "error adding notes to tickets")
+		return nil, 0, fmt.Errorf("error adding notes to tickets: %w", err)
 	}
 
 	return newBulkResponse(evts), http.StatusOK, nil

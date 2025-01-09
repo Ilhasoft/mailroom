@@ -2,13 +2,14 @@ package ticket
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/core/tasks/handler"
+	"github.com/nyaruka/mailroom/core/tasks/handler/ctasks"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/mailroom/web"
-	"github.com/pkg/errors"
 )
 
 func init() {
@@ -27,32 +28,34 @@ func init() {
 func handleClose(ctx context.Context, rt *runtime.Runtime, r *http.Request) (any, int, error) {
 	request := &bulkTicketRequest{}
 	if err := web.ReadAndValidateJSON(r, request); err != nil {
-		return errors.Wrapf(err, "request failed validation"), http.StatusBadRequest, nil
+		return fmt.Errorf("request failed validation: %w", err), http.StatusBadRequest, nil
 	}
 
 	// grab our org assets
 	oa, err := models.GetOrgAssets(ctx, rt, request.OrgID)
 	if err != nil {
-		return nil, 0, errors.Wrap(err, "unable to load org assets")
+		return nil, 0, fmt.Errorf("unable to load org assets: %w", err)
 	}
 
 	tickets, err := models.LoadTickets(ctx, rt.DB, request.TicketIDs)
 	if err != nil {
-		return nil, 0, errors.Wrapf(err, "error loading tickets for org: %d", request.OrgID)
+		return nil, 0, fmt.Errorf("error loading tickets for org: %d: %w", request.OrgID, err)
 	}
 
 	evts, err := models.CloseTickets(ctx, rt, oa, request.UserID, tickets)
 	if err != nil {
-		return nil, 0, errors.Wrap(err, "error closing tickets")
+		return nil, 0, fmt.Errorf("error closing tickets: %w", err)
 	}
 
 	rc := rt.RP.Get()
 	defer rc.Close()
 
 	for t, e := range evts {
-		err = handler.QueueTicketEvent(rc, t.ContactID(), e)
-		if err != nil {
-			return nil, 0, errors.Wrapf(err, "error queueing ticket event for ticket %d", t.ID())
+		if e.EventType() == models.TicketEventTypeClosed {
+			err = handler.QueueTask(rc, e.OrgID(), e.ContactID(), ctasks.NewTicketClosed(t.ID()))
+			if err != nil {
+				return nil, 0, fmt.Errorf("error queueing ticket closed task %d: %w", t.ID(), err)
+			}
 		}
 	}
 

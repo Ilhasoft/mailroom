@@ -11,7 +11,6 @@ import (
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/redisx"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -83,7 +82,7 @@ func RecordFlowStatistics(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx,
 
 			err := recentSet.Add(rc, value, score)
 			if err != nil {
-				return errors.Wrap(err, "error adding recent contact to set")
+				return fmt.Errorf("error adding recent contact to set: %w", err)
 			}
 		}
 	}

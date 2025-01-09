@@ -33,7 +33,6 @@ import (
 	"github.com/nyaruka/mailroom/core/ivr"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
 )
 
 // IgnoreSignatures sets whether we ignore signatures (for unit tests)
@@ -80,12 +79,12 @@ func NewServiceFromChannel(httpClient *http.Client, channel *models.Channel) (iv
 	appID := channel.ConfigValue(appIDConfig, "")
 	key := channel.ConfigValue(privateKeyConfig, "")
 	if appID == "" || key == "" {
-		return nil, errors.Errorf("missing %s or %s on channel config", appIDConfig, privateKeyConfig)
+		return nil, fmt.Errorf("missing %s or %s on channel config", appIDConfig, privateKeyConfig)
 	}
 
 	privateKey, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(key))
 	if err != nil {
-		return nil, errors.Wrapf(err, "error parsing private key")
+		return nil, fmt.Errorf("error parsing private key: %w", err)
 	}
 
 	return &service{
@@ -112,15 +111,15 @@ func readBody(r *http.Request) ([]byte, error) {
 func (s *service) CallIDForRequest(r *http.Request) (string, error) {
 	body, err := readBody(r)
 	if err != nil {
-		return "", errors.Wrapf(err, "error reading body from request")
+		return "", fmt.Errorf("error reading body from request: %w", err)
 	}
 	callID, err := jsonparser.GetString(body, "uuid")
 	if err != nil {
-		return "", errors.Errorf("invalid json body")
+		return "", fmt.Errorf("invalid json body")
 	}
 
 	if callID == "" {
-		return "", errors.Errorf("no uuid set on call")
+		return "", fmt.Errorf("no uuid set on call")
 	}
 	return callID, nil
 }
@@ -129,7 +128,7 @@ func (s *service) URNForRequest(r *http.Request) (urns.URN, error) {
 	// get our recording url out
 	body, err := readBody(r)
 	if err != nil {
-		return "", errors.Wrapf(err, "error reading body from request")
+		return "", fmt.Errorf("error reading body from request: %w", err)
 	}
 	direction, _ := jsonparser.GetString(body, "direction")
 	if direction == "" {
@@ -146,20 +145,20 @@ func (s *service) URNForRequest(r *http.Request) (urns.URN, error) {
 
 	urn, err := jsonparser.GetString(body, urnKey)
 	if err != nil {
-		return "", errors.Errorf("invalid json body")
+		return "", fmt.Errorf("invalid json body")
 	}
 
 	if urn == "" {
-		return "", errors.Errorf("no urn found in body")
+		return "", fmt.Errorf("no urn found in body")
 	}
-	return urns.NewTelURNForCountry("+"+urn, "")
+	return urns.ParsePhone("+"+urn, "", true, false)
 }
 
 func (s *service) DownloadMedia(url string) (*http.Response, error) {
 	req, _ := http.NewRequest(http.MethodGet, url, nil)
 	token, err := s.generateToken()
 	if err != nil {
-		return nil, errors.Wrapf(err, "error generating jwt token")
+		return nil, fmt.Errorf("error generating jwt token: %w", err)
 	}
 
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
@@ -181,7 +180,7 @@ func (s *service) PreprocessStatus(ctx context.Context, rt *runtime.Runtime, r *
 	// check the type of this status, we don't care about preprocessing "transfer" statuses
 	nxType, err := jsonparser.GetString(body, "type")
 	if err == jsonparser.MalformedJsonError {
-		return nil, errors.Wrapf(err, "invalid json body: %s", body)
+		return nil, fmt.Errorf("invalid json body: %s: %w", body, err)
 	}
 
 	if nxType == "transfer" {
@@ -214,7 +213,7 @@ func (s *service) PreprocessStatus(ctx context.Context, rt *runtime.Runtime, r *
 	}
 
 	if err != nil {
-		return nil, errors.Wrapf(err, "error looking up leg uuid: %s", redisKey)
+		return nil, fmt.Errorf("error looking up leg uuid: %s: %w", redisKey, err)
 	}
 
 	// transfer the call back to our handle with the dial wait type
@@ -231,7 +230,7 @@ func (s *service) PreprocessStatus(ctx context.Context, rt *runtime.Runtime, r *
 			return nil, fmt.Errorf("unable to find call status for: %s", callUUID)
 		}
 		if err != nil {
-			return nil, errors.Wrapf(err, "error looking up call status for: %s", callUUID)
+			return nil, fmt.Errorf("error looking up call status for: %s: %w", callUUID, err)
 		}
 
 		// duration of the call is in our body
@@ -250,7 +249,7 @@ func (s *service) PreprocessStatus(ctx context.Context, rt *runtime.Runtime, r *
 		}
 		trace, err := s.makeRequest(http.MethodPut, s.callURL+"/"+callUUID, nxBody)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error reconnecting flow for call: %s", callUUID)
+			return nil, fmt.Errorf("error reconnecting flow for call: %s: %w", callUUID, err)
 		}
 
 		// vonage return 204 on successful updates
@@ -270,7 +269,7 @@ func (s *service) PreprocessStatus(ctx context.Context, rt *runtime.Runtime, r *
 		redisKey := fmt.Sprintf("dial_status_%s", callUUID)
 		_, err = rc.Do("setex", redisKey, 300, status)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error inserting recording URL into redis")
+			return nil, fmt.Errorf("error inserting recording URL into redis: %w", err)
 		}
 
 		slog.Debug("saved intermediary dial status for call", "callUUID", callUUID, "status", status, "redisKey", redisKey)
@@ -288,7 +287,7 @@ func (s *service) PreprocessResume(ctx context.Context, rt *runtime.Runtime, cal
 	case "record":
 		recordingUUID := r.URL.Query().Get("recording_uuid")
 		if recordingUUID == "" {
-			return nil, errors.Errorf("record resume without recording_uuid")
+			return nil, fmt.Errorf("record resume without recording_uuid")
 		}
 
 		rc := rt.RP.Get()
@@ -297,7 +296,7 @@ func (s *service) PreprocessResume(ctx context.Context, rt *runtime.Runtime, cal
 		redisKey := fmt.Sprintf("recording_%s", recordingUUID)
 		recordingURL, err := redis.String(rc.Do("get", redisKey))
 		if err != nil && err != redis.ErrNil {
-			return nil, errors.Wrapf(err, "error getting recording url from redis")
+			return nil, fmt.Errorf("error getting recording url from redis: %w", err)
 		}
 
 		// found a URL, stuff it in our request and move on
@@ -329,20 +328,20 @@ func (s *service) PreprocessResume(ctx context.Context, rt *runtime.Runtime, cal
 		// this is our async callback for our recording URL, we stuff it in redis and return an empty response
 		recordingUUID := r.URL.Query().Get("recording_uuid")
 		if recordingUUID == "" {
-			return nil, errors.Errorf("recording_url resume without recording_uuid")
+			return nil, fmt.Errorf("recording_url resume without recording_uuid")
 		}
 
 		// get our recording url out
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error reading body from request")
+			return nil, fmt.Errorf("error reading body from request: %w", err)
 		}
 		recordingURL, err := jsonparser.GetString(body, "recording_url")
 		if err != nil {
-			return nil, errors.Errorf("invalid json body")
+			return nil, fmt.Errorf("invalid json body")
 		}
 		if recordingURL == "" {
-			return nil, errors.Errorf("no recording_url found in request")
+			return nil, fmt.Errorf("no recording_url found in request")
 		}
 
 		// write it to redis
@@ -352,7 +351,7 @@ func (s *service) PreprocessResume(ctx context.Context, rt *runtime.Runtime, cal
 		redisKey := fmt.Sprintf("recording_%s", recordingUUID)
 		_, err = rc.Do("setex", redisKey, 300, recordingURL)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error inserting recording URL into redis")
+			return nil, fmt.Errorf("error inserting recording URL into redis: %w", err)
 		}
 
 		msgBody := map[string]string{
@@ -384,22 +383,22 @@ func (s *service) RequestCall(number urns.URN, resumeURL string, statusURL strin
 
 	trace, err := s.makeRequest(http.MethodPost, s.callURL, callR)
 	if err != nil {
-		return ivr.NilCallID, trace, errors.Wrapf(err, "error trying to start call")
+		return ivr.NilCallID, trace, fmt.Errorf("error trying to start call: %w", err)
 	}
 
 	if trace.Response.StatusCode != http.StatusCreated {
-		return ivr.NilCallID, trace, errors.Errorf("received non 201 status for call start: %d", trace.Response.StatusCode)
+		return ivr.NilCallID, trace, fmt.Errorf("received non 201 status for call start: %d", trace.Response.StatusCode)
 	}
 
 	// parse out our call sid
 	call := &CallResponse{}
 	err = json.Unmarshal(trace.ResponseBody, call)
 	if err != nil || call.UUID == "" {
-		return ivr.NilCallID, trace, errors.Errorf("unable to read call uuid")
+		return ivr.NilCallID, trace, fmt.Errorf("unable to read call uuid")
 	}
 
 	if call.Status == statusFailed {
-		return ivr.NilCallID, trace, errors.Errorf("call status returned as failed")
+		return ivr.NilCallID, trace, fmt.Errorf("call status returned as failed")
 	}
 
 	slog.Debug("requested call", "body", string(trace.ResponseBody), "status", trace.Response.StatusCode)
@@ -413,11 +412,11 @@ func (s *service) HangupCall(callID string) (*httpx.Trace, error) {
 	url := s.callURL + "/" + callID
 	trace, err := s.makeRequest(http.MethodPut, url, hangupBody)
 	if err != nil {
-		return trace, errors.Wrapf(err, "error trying to hangup call")
+		return trace, fmt.Errorf("error trying to hangup call: %w", err)
 	}
 
 	if trace.Response.StatusCode != 204 {
-		return trace, errors.Errorf("received non 204 status for call hangup: %d", trace.Response.StatusCode)
+		return trace, fmt.Errorf("received non 204 status for call hangup: %d", trace.Response.StatusCode)
 	}
 	return trace, nil
 }
@@ -446,12 +445,12 @@ func (s *service) ResumeForRequest(r *http.Request) (ivr.Resume, error) {
 		input := &NCCOInput{}
 		bb, err := readBody(r)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error reading request body")
+			return nil, fmt.Errorf("error reading request body: %w", err)
 		}
 
 		err = json.Unmarshal(bb, input)
 		if err != nil {
-			return nil, errors.Wrapf(err, "unable to parse ncco request")
+			return nil, fmt.Errorf("unable to parse ncco request: %w", err)
 		}
 
 		// otherwise grab the right field based on our wait type
@@ -473,25 +472,25 @@ func (s *service) ResumeForRequest(r *http.Request) (ivr.Resume, error) {
 			return ivr.InputResume{Attachment: utils.Attachment("audio:" + recordingURL)}, nil
 
 		default:
-			return nil, errors.Errorf("unknown wait_type: %s", waitType)
+			return nil, fmt.Errorf("unknown wait_type: %s", waitType)
 		}
 	}
 
 	// only remaining type should be dial
 	if waitType != "dial" {
-		return nil, errors.Errorf("unknown wait_type: %s", waitType)
+		return nil, fmt.Errorf("unknown wait_type: %s", waitType)
 	}
 
 	status := r.URL.Query().Get("dial_status")
 	if status == "" {
-		return nil, errors.Errorf("unable to find dial_status in query url")
+		return nil, fmt.Errorf("unable to find dial_status in query url")
 	}
 	duration := 0
 	d := r.URL.Query().Get("dial_duration")
 	if d != "" {
 		parsed, err := strconv.Atoi(d)
 		if err != nil {
-			return nil, errors.Errorf("non-integer duration in query url")
+			return nil, fmt.Errorf("non-integer duration in query url")
 		}
 		duration = parsed
 	}
@@ -571,7 +570,7 @@ func (s *service) ValidateRequestSignature(r *http.Request) error {
 
 	actual := r.URL.Query().Get("sig")
 	if actual == "" {
-		return errors.Errorf("missing request sig")
+		return fmt.Errorf("missing request sig")
 	}
 
 	path := r.URL.RequestURI()
@@ -583,7 +582,7 @@ func (s *service) ValidateRequestSignature(r *http.Request) error {
 	url := fmt.Sprintf("https://%s%s", r.Host, path)
 	expected := s.calculateSignature(url)
 	if expected != actual {
-		return errors.Errorf("mismatch in signatures for url: %s, actual: %s, expected: %s", url, actual, expected)
+		return fmt.Errorf("mismatch in signatures for url: %s, actual: %s, expected: %s", url, actual, expected)
 	}
 	return nil
 }
@@ -592,25 +591,25 @@ func (s *service) ValidateRequestSignature(r *http.Request) error {
 func (s *service) WriteSessionResponse(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, channel *models.Channel, call *models.Call, session *models.Session, number urns.URN, resumeURL string, r *http.Request, w http.ResponseWriter) error {
 	// for errored sessions we should just output our error body
 	if session.Status() == models.SessionStatusFailed {
-		return errors.Errorf("cannot write IVR response for failed session")
+		return fmt.Errorf("cannot write IVR response for failed session")
 	}
 
 	// otherwise look for any say events
 	sprint := session.Sprint()
 	if sprint == nil {
-		return errors.Errorf("cannot write IVR response for session with no sprint")
+		return fmt.Errorf("cannot write IVR response for session with no sprint")
 	}
 
 	// get our response
 	response, err := s.responseForSprint(ctx, rt.RP, channel, call, resumeURL, sprint.Events())
 	if err != nil {
-		return errors.Wrap(err, "unable to build response for IVR call")
+		return fmt.Errorf("unable to build response for IVR call: %w", err)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_, err = w.Write([]byte(response))
 	if err != nil {
-		return errors.Wrap(err, "error writing IVR response")
+		return fmt.Errorf("error writing IVR response: %w", err)
 	}
 
 	return nil
@@ -654,7 +653,7 @@ func (s *service) makeRequest(method string, sendURL string, body any) (*httpx.T
 	req, _ := http.NewRequest(method, sendURL, bytes.NewReader(bb))
 	token, err := s.generateToken()
 	if err != nil {
-		return nil, errors.Wrapf(err, "error generating jwt token")
+		return nil, fmt.Errorf("error generating jwt token: %w", err)
 	}
 
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
@@ -795,7 +794,7 @@ func (s *service) responseForSprint(ctx context.Context, rp *redis.Pool, channel
 				waitActions = append(waitActions, input)
 
 			default:
-				return "", errors.Errorf("unable to use wait in IVR call, unknow hint type: %s", wait.Hint.Type())
+				return "", fmt.Errorf("unable to use wait in IVR call, unknow hint type: %s", wait.Hint.Type())
 			}
 
 		case *events.DialWaitEvent:
@@ -825,17 +824,17 @@ func (s *service) responseForSprint(ctx context.Context, rp *redis.Pool, channel
 			trace, err := s.makeRequest(http.MethodPost, s.callURL, cr)
 			slog.Debug("initiated new call for transfer", "trace", trace)
 			if err != nil {
-				return "", errors.Wrapf(err, "error trying to start call")
+				return "", fmt.Errorf("error trying to start call: %w", err)
 			}
 
 			if trace.Response.StatusCode != http.StatusCreated {
-				return "", errors.Errorf("received non 200 status for call start: %d", trace.Response.StatusCode)
+				return "", fmt.Errorf("received non 200 status for call start: %d", trace.Response.StatusCode)
 			}
 
 			// we save away our call id, as we want to continue our original call when that is complete
 			transferUUID, err := jsonparser.GetString(trace.ResponseBody, "uuid")
 			if err != nil {
-				return "", errors.Wrapf(err, "error reading call id from transfer")
+				return "", fmt.Errorf("error reading call id from transfer: %w", err)
 			}
 
 			// save away the tranfer id, connecting it to this connection
@@ -847,7 +846,7 @@ func (s *service) responseForSprint(ctx context.Context, rp *redis.Pool, channel
 			redisValue := fmt.Sprintf("%s:%s", call.ExternalID(), eventURL)
 			_, err = rc.Do("setex", redisKey, 3600, redisValue)
 			if err != nil {
-				return "", errors.Wrapf(err, "error inserting transfer ID into redis")
+				return "", fmt.Errorf("error inserting transfer ID into redis: %w", err)
 			}
 			slog.Debug("saved away call", "transferUUID", transferUUID, "callID", call.ExternalID(), "redisKey", redisKey, "redisValue", redisValue)
 		}
@@ -888,7 +887,7 @@ func (s *service) responseForSprint(ctx context.Context, rp *redis.Pool, channel
 		body, err = json.Marshal(actions)
 	}
 	if err != nil {
-		return "", errors.Wrap(err, "unable to marshal ncco body")
+		return "", fmt.Errorf("unable to marshal ncco body: %w", err)
 	}
 
 	return string(body), nil

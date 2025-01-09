@@ -72,7 +72,7 @@ func TestSessionCreationAndUpdating(t *testing.T) {
 	modelContact, _, _ = testdata.Bob.Load(rt, oa)
 	assert.Equal(t, flow.ID, modelContact.CurrentFlowID())
 
-	flowSession, err = session.FlowSession(rt.Config, oa.SessionAssets(), oa.Env())
+	flowSession, err = session.FlowSession(ctx, rt, oa.SessionAssets(), oa.Env())
 	require.NoError(t, err)
 
 	flowSession, sprint2, err := test.ResumeSession(flowSession, sa, "no")
@@ -94,7 +94,7 @@ func TestSessionCreationAndUpdating(t *testing.T) {
 	assert.False(t, session.WaitResumeOnExpire())
 	assert.Nil(t, session.Timeout()) // this wait doesn't have a timeout
 
-	flowSession, err = session.FlowSession(rt.Config, oa.SessionAssets(), oa.Env())
+	flowSession, err = session.FlowSession(ctx, rt, oa.SessionAssets(), oa.Env())
 	require.NoError(t, err)
 
 	flowSession, sprint3, err := test.ResumeSession(flowSession, sa, "yes")
@@ -227,7 +227,7 @@ func TestSessionWithSubflows(t *testing.T) {
 			"status": "W", "session_type": "M", "current_flow_id": int64(child.ID), "responded": false, "ended_on": nil, "wait_resume_on_expire": true,
 		})
 
-	flowSession, err = session.FlowSession(rt.Config, oa.SessionAssets(), oa.Env())
+	flowSession, err = session.FlowSession(ctx, rt, oa.SessionAssets(), oa.Env())
 	require.NoError(t, err)
 
 	flowSession, sprint2, err := test.ResumeSession(flowSession, sa, "yes")
@@ -492,7 +492,7 @@ func TestClearWaitTimeout(t *testing.T) {
 func insertSessionAndRun(rt *runtime.Runtime, contact *testdata.Contact, sessionType models.FlowType, status models.SessionStatus, flow *testdata.Flow, connID models.CallID) (models.SessionID, models.FlowRunID) {
 	// create session and add a run with same status
 	sessionID := testdata.InsertFlowSession(rt, testdata.Org1, contact, sessionType, status, flow, connID)
-	runID := testdata.InsertFlowRun(rt, testdata.Org1, sessionID, contact, flow, models.RunStatus(status))
+	runID := testdata.InsertFlowRun(rt, testdata.Org1, sessionID, contact, flow, models.RunStatus(status), "")
 
 	// mark contact as being in that flow
 	rt.DB.MustExec(`UPDATE contacts_contact SET current_flow_id = $2 WHERE id = $1`, contact.ID, flow.ID)

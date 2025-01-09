@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/jmoiron/sqlx"
@@ -10,7 +11,6 @@ import (
 	"github.com/nyaruka/mailroom/core/hooks"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
 )
 
 func init() {
@@ -26,7 +26,7 @@ func handleIVRCreated(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa 
 	// get our call
 	call := scene.Session().Call()
 	if call == nil {
-		return errors.Errorf("ivr session must have a call set")
+		return fmt.Errorf("ivr session must have a call set")
 	}
 
 	// if our call is no longer in progress, return

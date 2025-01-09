@@ -14,7 +14,7 @@ import (
 )
 
 func TestScheduleCampaignEvent(t *testing.T) {
-	ctx, rt := testsuite.Runtime()
+	_, rt := testsuite.Runtime()
 
 	defer testsuite.Reset(testsuite.ResetAll)
 
@@ -35,9 +35,8 @@ func TestScheduleCampaignEvent(t *testing.T) {
 	//  2. +10 Minutes send message
 
 	// schedule first event...
-	task := &campaigns.ScheduleCampaignEventTask{CampaignEventID: testdata.RemindersEvent1.ID}
-	err := task.Perform(ctx, rt, testdata.Org1.ID)
-	require.NoError(t, err)
+	testsuite.QueueBatchTask(t, rt, testdata.Org1, &campaigns.ScheduleCampaignEventTask{CampaignEventID: testdata.RemindersEvent1.ID})
+	testsuite.FlushTasks(t, rt)
 
 	// cathy has no value for joined and alexandia has a value too far in past, but bob and george will have values...
 	assertContactFires(t, rt.DB, testdata.RemindersEvent1.ID, map[models.ContactID]time.Time{
@@ -46,9 +45,8 @@ func TestScheduleCampaignEvent(t *testing.T) {
 	})
 
 	// schedule second event...
-	task = &campaigns.ScheduleCampaignEventTask{CampaignEventID: testdata.RemindersEvent2.ID}
-	err = task.Perform(ctx, rt, testdata.Org1.ID)
-	require.NoError(t, err)
+	testsuite.QueueBatchTask(t, rt, testdata.Org1, &campaigns.ScheduleCampaignEventTask{CampaignEventID: testdata.RemindersEvent2.ID})
+	testsuite.FlushTasks(t, rt)
 
 	assertContactFires(t, rt.DB, testdata.RemindersEvent2.ID, map[models.ContactID]time.Time{
 		testdata.Bob.ID:    time.Date(2030, 1, 1, 0, 10, 0, 0, time.UTC),
@@ -70,9 +68,8 @@ func TestScheduleCampaignEvent(t *testing.T) {
 	// create new campaign event based on created_on + 5 minutes
 	event3 := testdata.InsertCampaignFlowEvent(rt, testdata.RemindersCampaign, testdata.Favorites, testdata.CreatedOnField, 5, "M")
 
-	task = &campaigns.ScheduleCampaignEventTask{CampaignEventID: event3.ID}
-	err = task.Perform(ctx, rt, testdata.Org1.ID)
-	require.NoError(t, err)
+	testsuite.QueueBatchTask(t, rt, testdata.Org1, &campaigns.ScheduleCampaignEventTask{CampaignEventID: event3.ID})
+	testsuite.FlushTasks(t, rt)
 
 	// only cathy is in the group and new enough to have a fire
 	assertContactFires(t, rt.DB, event3.ID, map[models.ContactID]time.Time{
@@ -85,9 +82,8 @@ func TestScheduleCampaignEvent(t *testing.T) {
 	// bump last_seen_on for bob
 	rt.DB.MustExec(`UPDATE contacts_contact SET last_seen_on = '2040-01-01T00:00:00Z' WHERE id = $1`, testdata.Bob.ID)
 
-	task = &campaigns.ScheduleCampaignEventTask{CampaignEventID: event4.ID}
-	err = task.Perform(ctx, rt, testdata.Org1.ID)
-	require.NoError(t, err)
+	testsuite.QueueBatchTask(t, rt, testdata.Org1, &campaigns.ScheduleCampaignEventTask{CampaignEventID: event4.ID})
+	testsuite.FlushTasks(t, rt)
 
 	assertContactFires(t, rt.DB, event4.ID, map[models.ContactID]time.Time{
 		testdata.Bob.ID: time.Date(2040, 1, 2, 0, 0, 0, 0, time.UTC),

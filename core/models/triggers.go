@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -13,7 +14,6 @@ import (
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/goflow/flows/triggers"
 	"github.com/nyaruka/goflow/utils"
-	"github.com/pkg/errors"
 )
 
 // TriggerType is the type of a trigger
@@ -98,7 +98,7 @@ func (t *Trigger) CreateStart() *FlowStart {
 func loadTriggers(ctx context.Context, db *sql.DB, orgID OrgID) ([]*Trigger, error) {
 	rows, err := db.QueryContext(ctx, sqlSelectTriggersByOrg, orgID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error querying triggers for org: %d", orgID)
+		return nil, fmt.Errorf("error querying triggers for org: %d: %w", orgID, err)
 	}
 	defer rows.Close()
 
@@ -107,7 +107,7 @@ func loadTriggers(ctx context.Context, db *sql.DB, orgID OrgID) ([]*Trigger, err
 		trigger := &Trigger{}
 		err = dbutil.ScanJSON(rows, &trigger.t)
 		if err != nil {
-			return nil, errors.Wrap(err, "error scanning label row")
+			return nil, fmt.Errorf("error scanning label row: %w", err)
 		}
 
 		triggers = append(triggers, trigger)
@@ -357,7 +357,7 @@ func ArchiveContactTriggers(ctx context.Context, tx DBorTx, contactIDs []Contact
 	// start by getting all the active triggers that reference these contacts
 	rows, err := tx.QueryxContext(ctx, sqlSelectTriggersByContactIDs, pq.Array(contactIDs))
 	if err != nil {
-		return errors.Wrapf(err, "error finding triggers for contacts")
+		return fmt.Errorf("error finding triggers for contacts: %w", err)
 	}
 	defer rows.Close()
 
@@ -366,7 +366,7 @@ func ArchiveContactTriggers(ctx context.Context, tx DBorTx, contactIDs []Contact
 		var triggerID TriggerID
 		err := rows.Scan(&triggerID)
 		if err != nil {
-			return errors.Wrapf(err, "error reading trigger ID")
+			return fmt.Errorf("error reading trigger ID: %w", err)
 		}
 		triggerIDs = append(triggerIDs, triggerID)
 	}
@@ -374,13 +374,13 @@ func ArchiveContactTriggers(ctx context.Context, tx DBorTx, contactIDs []Contact
 	// remove any references to these contacts in triggers
 	_, err = tx.ExecContext(ctx, `DELETE FROM triggers_trigger_contacts WHERE contact_id = ANY($1)`, pq.Array(contactIDs))
 	if err != nil {
-		return errors.Wrapf(err, "error removing contacts from triggers")
+		return fmt.Errorf("error removing contacts from triggers: %w", err)
 	}
 
 	// archive any of the original triggers which are now not referencing any contact or group
 	_, err = tx.ExecContext(ctx, sqlArchiveEmptyTriggers, pq.Array(triggerIDs))
 	if err != nil {
-		return errors.Wrapf(err, "error archiving empty triggers")
+		return fmt.Errorf("error archiving empty triggers: %w", err)
 	}
 
 	return nil

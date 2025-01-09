@@ -2,16 +2,15 @@ package msg
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/nyaruka/goflow/assets"
-	"github.com/nyaruka/goflow/contactql"
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/core/search"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/mailroom/web"
-	"github.com/pkg/errors"
 )
 
 func init() {
@@ -56,7 +55,7 @@ type previewResponse struct {
 func handleBroadcastPreview(ctx context.Context, rt *runtime.Runtime, r *previewRequest) (any, int, error) {
 	oa, err := models.GetOrgAssets(ctx, rt, r.OrgID)
 	if err != nil {
-		return nil, 0, errors.Wrapf(err, "unable to load org assets")
+		return nil, 0, fmt.Errorf("unable to load org assets: %w", err)
 	}
 
 	groups := make([]*models.Group, 0, len(r.Include.GroupUUIDs))
@@ -69,19 +68,15 @@ func handleBroadcastPreview(ctx context.Context, rt *runtime.Runtime, r *preview
 
 	query, err := search.BuildRecipientsQuery(oa, nil, groups, r.Include.ContactUUIDs, r.Include.Query, r.Exclude, nil)
 	if err != nil {
-		isQueryError, qerr := contactql.IsQueryError(err)
-		if isQueryError {
-			return qerr, http.StatusBadRequest, nil
-		}
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("error building query: %w", err)
 	}
 	if query == "" {
 		return &previewResponse{Query: "", Total: 0}, http.StatusOK, nil
 	}
 
-	parsedQuery, total, err := search.GetContactTotal(ctx, rt, oa, query)
+	parsedQuery, total, err := search.GetContactTotal(ctx, rt, oa, nil, query)
 	if err != nil {
-		return nil, 0, errors.Wrap(err, "error querying preview")
+		return nil, 0, fmt.Errorf("error querying preview: %w", err)
 	}
 
 	return &previewResponse{Query: parsedQuery.String(), Total: int(total)}, http.StatusOK, nil

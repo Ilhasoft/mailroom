@@ -2,13 +2,13 @@ package hooks
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/nyaruka/goflow/flows/events"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/pkg/errors"
 )
 
 // CommitStatusChangesHook is our hook for status changes
@@ -28,7 +28,7 @@ func (h *commitStatusChangesHook) Apply(ctx context.Context, rt *runtime.Runtime
 
 	err := models.UpdateContactStatus(ctx, tx, statusChanges)
 	if err != nil {
-		return errors.Wrapf(err, "error updating contact statuses")
+		return fmt.Errorf("error updating contact statuses: %w", err)
 	}
 	return nil
 }

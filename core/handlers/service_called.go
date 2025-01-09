@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -11,7 +12,6 @@ import (
 	"github.com/nyaruka/mailroom/core/hooks"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
 )
 
 func init() {
@@ -29,7 +29,7 @@ func handleServiceCalled(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, 
 	if event.Service == "classifier" {
 		classifier = oa.ClassifierByUUID(event.Classifier.UUID)
 		if classifier == nil {
-			return errors.Errorf("unable to find classifier with UUID: %s", event.Classifier.UUID)
+			return fmt.Errorf("unable to find classifier with UUID: %s", event.Classifier.UUID)
 		}
 	}
 

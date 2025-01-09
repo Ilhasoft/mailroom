@@ -2,12 +2,12 @@ package hooks
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/pkg/errors"
 )
 
 // InsertWebhookEventHook is our hook for when a resthook needs to be inserted
@@ -26,7 +26,7 @@ func (h *insertWebhookEventHook) Apply(ctx context.Context, rt *runtime.Runtime,
 
 	err := models.InsertWebhookEvents(ctx, tx, events)
 	if err != nil {
-		return errors.Wrapf(err, "error inserting webhook events")
+		return fmt.Errorf("error inserting webhook events: %w", err)
 	}
 
 	return nil

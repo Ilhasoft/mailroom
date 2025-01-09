@@ -2,13 +2,13 @@ package hooks
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/pkg/errors"
 )
 
 // ContactLastSeenHook is our hook for contact changes that require an update to last_seen_on
@@ -25,7 +25,7 @@ func (h *contactLastSeenHook) Apply(ctx context.Context, rt *runtime.Runtime, tx
 
 		err := models.UpdateContactLastSeenOn(ctx, tx, scene.ContactID(), lastSeenOn)
 		if err != nil {
-			return errors.Wrapf(err, "error updating last_seen_on on contacts")
+			return fmt.Errorf("error updating last_seen_on on contacts: %w", err)
 		}
 	}
 

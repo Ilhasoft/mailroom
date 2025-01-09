@@ -3,11 +3,11 @@ package models
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
 	"github.com/nyaruka/goflow/assets"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/pkg/errors"
 )
 
 type LabelID int
@@ -32,7 +32,7 @@ func (l *Label) Name() string { return l.Name_ }
 func loadLabels(ctx context.Context, db *sql.DB, orgID OrgID) ([]assets.Label, error) {
 	rows, err := db.QueryContext(ctx, sqlSelectLabelsByOrg, orgID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error querying labels for org: %d", orgID)
+		return nil, fmt.Errorf("error querying labels for org: %d: %w", orgID, err)
 	}
 
 	return ScanJSONRows(rows, func() assets.Label { return &Label{} })
@@ -49,7 +49,10 @@ SELECT ROW_TO_JSON(r) FROM (
 // AddMsgLabels inserts the passed in msg labels to our db
 func AddMsgLabels(ctx context.Context, tx *sqlx.Tx, adds []*MsgLabelAdd) error {
 	err := BulkQuery(ctx, "inserting msg labels", tx, sqlInsertMsgLabels, adds)
-	return errors.Wrapf(err, "error inserting new msg labels")
+	if err != nil {
+		return fmt.Errorf("error inserting new msg labels: %w", err)
+	}
+	return nil
 }
 
 const sqlInsertMsgLabels = `

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/jmoiron/sqlx"
@@ -11,7 +12,6 @@ import (
 	"github.com/nyaruka/mailroom/core/hooks"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
 )
 
 func init() {
@@ -31,7 +31,7 @@ func handleOptInRequested(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx,
 		if models.GetURNInt(urn, "id") == 0 {
 			urn, err = models.GetOrCreateURN(ctx, tx, oa, scene.ContactID(), event.URN)
 			if err != nil {
-				return errors.Wrapf(err, "unable to get or create URN: %s", event.URN)
+				return fmt.Errorf("unable to get or create URN: %s: %w", event.URN, err)
 			}
 		}
 	}
@@ -39,13 +39,13 @@ func handleOptInRequested(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx,
 	// get our opt in
 	optIn := oa.OptInByUUID(event.OptIn.UUID)
 	if optIn == nil {
-		return errors.Errorf("unable to load optin with uuid: %s", event.OptIn.UUID)
+		return fmt.Errorf("unable to load optin with uuid: %s", event.OptIn.UUID)
 	}
 
 	// get our channel
 	channel := oa.ChannelByUUID(event.Channel.UUID)
 	if channel == nil {
-		return errors.Errorf("unable to load channel with uuid: %s", event.Channel.UUID)
+		return fmt.Errorf("unable to load channel with uuid: %s", event.Channel.UUID)
 	}
 
 	// and the flow

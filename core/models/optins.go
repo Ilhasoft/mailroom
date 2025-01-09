@@ -4,10 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"fmt"
 
 	"github.com/nyaruka/goflow/assets"
 	"github.com/nyaruka/null/v3"
-	"github.com/pkg/errors"
 )
 
 // OptInID is our type for the database id of an optin
@@ -43,7 +43,7 @@ SELECT ROW_TO_JSON(r) FROM (
 func loadOptIns(ctx context.Context, db *sql.DB, orgID OrgID) ([]assets.OptIn, error) {
 	rows, err := db.QueryContext(ctx, sqlSelectOptInsByOrg, orgID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error querying optins for org: %d", orgID)
+		return nil, fmt.Errorf("error querying optins for org: %d: %w", orgID, err)
 	}
 
 	return ScanJSONRows(rows, func() assets.OptIn { return &OptIn{} })

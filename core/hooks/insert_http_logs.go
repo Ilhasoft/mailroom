@@ -2,12 +2,12 @@ package hooks
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/pkg/errors"
 )
 
 // InsertHTTPLogsHook is our hook for inserting classifier logs
@@ -27,7 +27,7 @@ func (h *insertHTTPLogsHook) Apply(ctx context.Context, rt *runtime.Runtime, tx 
 
 	err := models.InsertHTTPLogs(ctx, tx, logs)
 	if err != nil {
-		return errors.Wrapf(err, "error inserting http logs")
+		return fmt.Errorf("error inserting http logs: %w", err)
 	}
 
 	return nil

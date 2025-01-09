@@ -36,13 +36,13 @@ func TestBuildRecipientsQuery(t *testing.T) {
 		expected      string
 		err           string
 	}{
-		{
+		{ // 0
 			groups:       []*models.Group{doctors, testers},
 			contactUUIDs: []flows.ContactUUID{testdata.Cathy.UUID, testdata.George.UUID},
 			exclusions:   models.Exclusions{},
 			expected:     `group = "Doctors" OR group = "Testers" OR uuid = "6393abc0-283d-4c9b-a1b3-641a035c34bf" OR uuid = "8d024bcd-f473-4719-a00a-bd0bb1190135"`,
 		},
-		{
+		{ // 1
 			groups:       []*models.Group{doctors},
 			contactUUIDs: []flows.ContactUUID{testdata.Cathy.UUID},
 			exclusions: models.Exclusions{
@@ -54,19 +54,19 @@ func TestBuildRecipientsQuery(t *testing.T) {
 			excludeGroups: []*models.Group{testers},
 			expected:      `(group = "Doctors" OR uuid = "6393abc0-283d-4c9b-a1b3-641a035c34bf") AND status = "active" AND flow = "" AND history != "Favorites" AND last_seen_on > "20-01-2022" AND group != "Testers"`,
 		},
-		{
+		{ // 2
 			contactUUIDs: []flows.ContactUUID{testdata.Cathy.UUID},
 			exclusions: models.Exclusions{
 				NonActive: true,
 			},
 			expected: `uuid = "6393abc0-283d-4c9b-a1b3-641a035c34bf" AND status = "active"`,
 		},
-		{
-			userQuery:  `gender = "M"`,
+		{ // 3
+			userQuery:  `fields.GENDER = "M"`,
 			exclusions: models.Exclusions{},
-			expected:   `gender = "M"`,
+			expected:   `fields.gender = "M"`,
 		},
-		{
+		{ // 4
 			userQuery: `gender = "M"`,
 			exclusions: models.Exclusions{
 				NonActive:         true,
@@ -74,9 +74,9 @@ func TestBuildRecipientsQuery(t *testing.T) {
 				StartedPreviously: true,
 				NotSeenSinceDays:  30,
 			},
-			expected: `gender = "M" AND status = "active" AND flow = "" AND history != "Favorites" AND last_seen_on > "21-03-2022"`,
+			expected: `fields.gender = "M" AND status = "active" AND flow = "" AND history != "Favorites" AND last_seen_on > "21-03-2022"`,
 		},
-		{
+		{ // 5
 			userQuery: `name ~ ben`,
 			exclusions: models.Exclusions{
 				NonActive:         false,
@@ -86,7 +86,7 @@ func TestBuildRecipientsQuery(t *testing.T) {
 			},
 			expected: `name ~ "ben" AND last_seen_on > "21-03-2022"`,
 		},
-		{
+		{ // 6
 			userQuery: `name ~ ben OR name ~ eric`,
 			exclusions: models.Exclusions{
 				NonActive:         false,
@@ -96,25 +96,30 @@ func TestBuildRecipientsQuery(t *testing.T) {
 			},
 			expected: `(name ~ "ben" OR name ~ "eric") AND last_seen_on > "21-03-2022"`,
 		},
-		{
+		{ // 7
 			userQuery:  `name ~`, // syntactically invalid user query
 			exclusions: models.Exclusions{},
-			err:        "invalid user query: mismatched input '<EOF>' expecting {TEXT, STRING}",
+			err:        "invalid user query: mismatched input '<EOF>' expecting {STRING, PROPERTY, TEXT}",
 		},
-		{
+		{ // 8
 			userQuery:  `goats > 14`, // no such field
+			exclusions: models.Exclusions{},
+			err:        "invalid user query: can't resolve 'goats' to attribute, scheme or field",
+		},
+		{ // 9
+			userQuery:  `fields.goats > 14`, // type prefix but no such field
 			exclusions: models.Exclusions{},
 			err:        "invalid user query: can't resolve 'goats' to attribute, scheme or field",
 		},
 	}
 
-	for _, tc := range tcs {
+	for i, tc := range tcs {
 		actual, err := search.BuildRecipientsQuery(oa, flow, tc.groups, tc.contactUUIDs, tc.userQuery, tc.exclusions, tc.excludeGroups)
 		if tc.err != "" {
 			assert.Equal(t, "", actual)
-			assert.EqualError(t, err, tc.err)
+			assert.EqualError(t, err, tc.err, "%d: error mismatch", i)
 		} else {
-			assert.Equal(t, tc.expected, actual)
+			assert.Equal(t, tc.expected, actual, "%d: query mismatch", i)
 			assert.NoError(t, err)
 		}
 	}

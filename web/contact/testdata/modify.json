@@ -1105,7 +1105,7 @@
         ]
     },
     {
-        "label": "add URN (deprecated urn modifier)",
+        "label": "add URNs, one of which already exists",
         "method": "POST",
         "path": "/mr/contact/modify",
         "body": {
@@ -1116,9 +1116,12 @@
             ],
             "modifiers": [
                 {
-                    "type": "urn",
+                    "type": "urns",
                     "modification": "append",
-                    "urn": "tel:+255788555222"
+                    "urns": [
+                        "tel:+255788555111",
+                        "tel:+255788555222"
+                    ]
                 }
             ]
         },
@@ -1148,54 +1151,6 @@
                             ]
                         }
                     ]
-                }
-            },
-            "skipped": []
-        },
-        "db_assertions": [
-            {
-                "query": "SELECT count(*) FROM contacts_contacturn WHERE contact_id = 10000 AND path = '+255788555222'",
-                "count": 1
-            }
-        ]
-    },
-    {
-        "label": "add existing URN",
-        "method": "POST",
-        "path": "/mr/contact/modify",
-        "body": {
-            "org_id": 1,
-            "user_id": 3,
-            "contact_ids": [
-                10000
-            ],
-            "modifiers": [
-                {
-                    "type": "urns",
-                    "modification": "append",
-                    "urns": [
-                        "tel:+255788555111"
-                    ]
-                }
-            ]
-        },
-        "status": 200,
-        "response": {
-            "modified": {
-                "10000": {
-                    "contact": {
-                        "uuid": "6393abc0-283d-4c9b-a1b3-641a035c34bf",
-                        "id": 10000,
-                        "language": "fra",
-                        "status": "active",
-                        "timezone": "America/Los_Angeles",
-                        "created_on": "2018-07-06T12:30:00.123457Z",
-                        "urns": [
-                            "tel:+255788555111?id=30000",
-                            "tel:+255788555222?id=30001"
-                        ]
-                    },
-                    "events": []
                 }
             },
             "skipped": []

@@ -2,21 +2,20 @@ package search
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/olivere/elastic/v7"
-	"github.com/pkg/errors"
 )
 
 // PopulateSmartGroup calculates which members should be part of a group and populates the contacts
 // for that group by performing the minimum number of inserts / deletes.
-func PopulateSmartGroup(ctx context.Context, rt *runtime.Runtime, es *elastic.Client, oa *models.OrgAssets, groupID models.GroupID, query string) (int, error) {
+func PopulateSmartGroup(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, groupID models.GroupID, query string) (int, error) {
 	err := models.UpdateGroupStatus(ctx, rt.DB, groupID, models.GroupStatusEvaluating)
 	if err != nil {
-		return 0, errors.Wrapf(err, "error marking dynamic group as evaluating")
+		return 0, fmt.Errorf("error marking dynamic group as evaluating: %w", err)
 	}
 
 	start := time.Now()
@@ -26,7 +25,7 @@ func PopulateSmartGroup(ctx context.Context, rt *runtime.Runtime, es *elastic.Cl
 	// more recently than 10 seconds ago, we wait that long before starting in populating our group
 	newest, err := models.GetNewestContactModifiedOn(ctx, rt.DB, oa)
 	if err != nil {
-		return 0, errors.Wrapf(err, "error getting most recent contact modified_on for org: %d", oa.OrgID())
+		return 0, fmt.Errorf("error getting most recent contact modified_on for org: %d: %w", oa.OrgID(), err)
 	}
 	if newest != nil {
 		n := *newest
@@ -40,9 +39,9 @@ func PopulateSmartGroup(ctx context.Context, rt *runtime.Runtime, es *elastic.Cl
 	}
 
 	// get current set of contacts in our group
-	ids, err := models.ContactIDsForGroupIDs(ctx, rt.DB, []models.GroupID{groupID})
+	ids, err := models.GetGroupContactIDs(ctx, rt.DB, groupID)
 	if err != nil {
-		return 0, errors.Wrapf(err, "unable to look up contact ids for group: %d", groupID)
+		return 0, fmt.Errorf("unable to look up contact ids for group: %d: %w", groupID, err)
 	}
 	present := make(map[models.ContactID]bool, len(ids))
 	for _, i := range ids {
@@ -50,9 +49,9 @@ func PopulateSmartGroup(ctx context.Context, rt *runtime.Runtime, es *elastic.Cl
 	}
 
 	// calculate new set of ids
-	new, err := GetContactIDsForQuery(ctx, rt, oa, query, -1)
+	new, err := GetContactIDsForQuery(ctx, rt, oa, nil, models.ContactStatusActive, query, -1)
 	if err != nil {
-		return 0, errors.Wrapf(err, "error performing query: %s for group: %d", query, groupID)
+		return 0, fmt.Errorf("error performing query: %s for group: %d: %w", query, groupID, err)
 	}
 
 	// find which contacts need to be added or removed
@@ -73,19 +72,19 @@ func PopulateSmartGroup(ctx context.Context, rt *runtime.Runtime, es *elastic.Cl
 	// first remove all the contacts
 	err = models.RemoveContactsFromGroupAndCampaigns(ctx, rt.DB, oa, groupID, removals)
 	if err != nil {
-		return 0, errors.Wrapf(err, "error removing contacts from group: %d", groupID)
+		return 0, fmt.Errorf("error removing contacts from group: %d: %w", groupID, err)
 	}
 
 	// then add them all
 	err = models.AddContactsToGroupAndCampaigns(ctx, rt.DB, oa, groupID, adds)
 	if err != nil {
-		return 0, errors.Wrapf(err, "error adding contacts to group: %d", groupID)
+		return 0, fmt.Errorf("error adding contacts to group: %d: %w", groupID, err)
 	}
 
 	// mark our group as no longer evaluating
 	err = models.UpdateGroupStatus(ctx, rt.DB, groupID, models.GroupStatusReady)
 	if err != nil {
-		return 0, errors.Wrapf(err, "error marking dynamic group as ready")
+		return 0, fmt.Errorf("error marking dynamic group as ready: %w", err)
 	}
 
 	// finally update modified_on for all affected contacts to ensure these changes are seen by rp-indexer
@@ -95,7 +94,7 @@ func PopulateSmartGroup(ctx context.Context, rt *runtime.Runtime, es *elastic.Cl
 
 	err = models.UpdateContactModifiedOn(ctx, rt.DB, changed)
 	if err != nil {
-		return 0, errors.Wrapf(err, "error updating contact modified_on after group population")
+		return 0, fmt.Errorf("error updating contact modified_on after group population: %w", err)
 	}
 
 	return len(new), nil

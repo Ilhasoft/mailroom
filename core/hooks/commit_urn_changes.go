@@ -2,12 +2,12 @@ package hooks
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/pkg/errors"
 )
 
 // CommitURNChangesHook is our hook for when a URN is added to a contact
@@ -25,7 +25,7 @@ func (h *commitURNChangesHook) Apply(ctx context.Context, rt *runtime.Runtime, t
 
 	err := models.UpdateContactURNs(ctx, tx, oa, changes)
 	if err != nil {
-		return errors.Wrapf(err, "error updating contact urns")
+		return fmt.Errorf("error updating contact urns: %w", err)
 	}
 
 	return nil

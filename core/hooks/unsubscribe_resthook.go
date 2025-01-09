@@ -2,12 +2,12 @@ package hooks
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/pkg/errors"
 )
 
 // UnsubscribeResthookHook is our hook for when a webhook is called
@@ -27,7 +27,7 @@ func (h *unsubscribeResthookHook) Apply(ctx context.Context, rt *runtime.Runtime
 
 	err := models.UnsubscribeResthooks(ctx, tx, unsubs)
 	if err != nil {
-		return errors.Wrapf(err, "error unsubscribing from resthooks")
+		return fmt.Errorf("error unsubscribing from resthooks: %w", err)
 	}
 
 	return nil

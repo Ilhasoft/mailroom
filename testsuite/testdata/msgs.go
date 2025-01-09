@@ -44,13 +44,18 @@ type OptIn struct {
 	UUID assets.OptInUUID
 }
 
+type Template struct {
+	ID   models.TemplateID
+	UUID assets.TemplateUUID
+}
+
 // InsertIncomingMsg inserts an incoming text message
 func InsertIncomingMsg(rt *runtime.Runtime, org *Org, channel *Channel, contact *Contact, text string, status models.MsgStatus) *MsgIn {
 	msgUUID := flows.MsgUUID(uuids.New())
 	var id models.MsgID
 	must(rt.DB.Get(&id,
-		`INSERT INTO msgs_msg(uuid, text, created_on, direction, msg_type, status, visibility, msg_count, error_count, next_attempt, contact_id, contact_urn_id, org_id, channel_id)
-	  	 VALUES($1, $2, NOW(), 'I', $3, $4, 'V', 1, 0, NOW(), $5, $6, $7, $8) RETURNING id`, msgUUID, text, models.MsgTypeText, status, contact.ID, contact.URNID, org.ID, channel.ID,
+		`INSERT INTO msgs_msg(uuid, text, created_on, modified_on, direction, msg_type, status, visibility, msg_count, error_count, next_attempt, contact_id, contact_urn_id, org_id, channel_id)
+	  	 VALUES($1, $2, NOW(), NOW(), 'I', $3, $4, 'V', 1, 0, NOW(), $5, $6, $7, $8) RETURNING id`, msgUUID, text, models.MsgTypeText, status, contact.ID, contact.URNID, org.ID, channel.ID,
 	))
 
 	fm := flows.NewMsgIn(msgUUID, contact.URN, assets.NewChannelReference(channel.UUID, ""), text, nil)
@@ -77,17 +82,17 @@ func insertOutgoingMsg(rt *runtime.Runtime, org *Org, channel *Channel, contact 
 	}
 
 	var sentOn *time.Time
-	if status == models.MsgStatusWired || status == models.MsgStatusSent || status == models.MsgStatusDelivered {
+	if status == models.MsgStatusWired || status == models.MsgStatusSent || status == models.MsgStatusDelivered || status == models.MsgStatusRead {
 		t := dates.Now()
 		sentOn = &t
 	}
 
-	fm := flows.NewMsgOut(contact.URN, channelRef, text, attachments, nil, nil, flows.NilMsgTopic, i18n.NilLocale, flows.NilUnsendableReason)
+	fm := flows.NewMsgOut(contact.URN, channelRef, &flows.MsgContent{text, attachments, nil}, nil, flows.NilMsgTopic, i18n.NilLocale, flows.NilUnsendableReason)
 
 	var id models.MsgID
 	must(rt.DB.Get(&id,
-		`INSERT INTO msgs_msg(uuid, text, attachments, locale, created_on, direction, msg_type, status, visibility, contact_id, contact_urn_id, org_id, channel_id, sent_on, msg_count, error_count, next_attempt, high_priority)
-	  	 VALUES($1, $2, $3, $4, NOW(), 'O', $5, $6, 'V', $7, $8, $9, $10, $11, 1, $12, $13, $14) RETURNING id`,
+		`INSERT INTO msgs_msg(uuid, text, attachments, locale, created_on, modified_on, direction, msg_type, status, visibility, contact_id, contact_urn_id, org_id, channel_id, sent_on, msg_count, error_count, next_attempt, high_priority)
+	  	 VALUES($1, $2, $3, $4, NOW(), NOW(), 'O', $5, $6, 'V', $7, $8, $9, $10, $11, 1, $12, $13, $14) RETURNING id`,
 		fm.UUID(), text, pq.Array(attachments), locale, typ, status, contact.ID, contact.URNID, org.ID, channelID, sentOn, errorCount, nextAttempt, highPriority,
 	))
 
@@ -98,7 +103,7 @@ func insertOutgoingMsg(rt *runtime.Runtime, org *Org, channel *Channel, contact 
 func InsertBroadcast(rt *runtime.Runtime, org *Org, baseLanguage i18n.Language, text map[i18n.Language]string, optIn *OptIn, schedID models.ScheduleID, contacts []*Contact, groups []*Group) models.BroadcastID {
 	translations := make(flows.BroadcastTranslations)
 	for lang, t := range text {
-		translations[lang] = &flows.BroadcastTranslation{Text: t}
+		translations[lang] = &flows.MsgContent{Text: t}
 	}
 
 	var optInID models.OptInID
@@ -109,7 +114,7 @@ func InsertBroadcast(rt *runtime.Runtime, org *Org, baseLanguage i18n.Language, 
 	var id models.BroadcastID
 	must(rt.DB.Get(&id,
 		`INSERT INTO msgs_broadcast(org_id, base_language, translations, optin_id, schedule_id, status, created_on, modified_on, created_by_id, modified_by_id, is_active)
-		VALUES($1, $2, $3, $4, $5, 'P', NOW(), NOW(), 1, 1, TRUE) RETURNING id`, org.ID, baseLanguage, translations, optInID, schedID,
+		VALUES($1, $2, $3, $4, $5, 'P', NOW(), NOW(), 1, 1, TRUE) RETURNING id`, org.ID, baseLanguage, models.JSONB[flows.BroadcastTranslations]{translations}, optInID, schedID,
 	))
 
 	for _, contact := range contacts {
@@ -131,4 +136,15 @@ func InsertOptIn(rt *runtime.Runtime, org *Org, name string) *OptIn {
 		VALUES($1, $2, $3, NOW(), NOW(), 1, 1, TRUE, FALSE) RETURNING id`, uuid, org.ID, name,
 	))
 	return &OptIn{ID: id, UUID: uuid}
+}
+
+// InsertTemplate inserts a template
+func InsertTemplate(rt *runtime.Runtime, org *Org, name string) *Template {
+	uuid := assets.TemplateUUID(uuids.New())
+	var id models.TemplateID
+	must(rt.DB.Get(&id,
+		`INSERT INTO templates_template(uuid, org_id, name, created_on, modified_on) 
+		VALUES($1, $2, $3, NOW(), NOW()) RETURNING id`, uuid, org.ID, name,
+	))
+	return &Template{ID: id, UUID: uuid}
 }

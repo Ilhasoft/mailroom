@@ -16,7 +16,6 @@ import (
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/null/v3"
 	"github.com/nyaruka/redisx"
-	"github.com/pkg/errors"
 )
 
 // IncidentID is our type for incident ids
@@ -51,7 +50,10 @@ func (i *Incident) End(ctx context.Context, db DBorTx) error {
 	now := time.Now()
 	i.EndedOn = &now
 	_, err := db.ExecContext(ctx, `UPDATE notifications_incident SET ended_on = $2 WHERE id = $1`, i.ID, i.EndedOn)
-	return errors.Wrap(err, "error updating incident ended_on")
+	if err != nil {
+		return fmt.Errorf("error updating incident ended_on: %w", err)
+	}
+	return nil
 }
 
 // IncidentWebhooksUnhealthy ensures there is an open unhealthy webhooks incident for the given org
@@ -76,7 +78,7 @@ func IncidentWebhooksUnhealthy(ctx context.Context, db DBorTx, rp *redis.Pool, o
 		rc.Send("EXPIRE", nodesKey, 60*30) // 30 minutes
 		_, err = rc.Do("EXEC")
 		if err != nil {
-			return NilIncidentID, errors.Wrap(err, "error adding node uuids to incident")
+			return NilIncidentID, fmt.Errorf("error adding node uuids to incident: %w", err)
 		}
 	}
 
@@ -93,7 +95,7 @@ func getOrCreateIncident(ctx context.Context, db DBorTx, oa *OrgAssets, incident
 	var incidentID IncidentID
 	err := db.GetContext(ctx, &incidentID, sqlInsertIncident, incident.OrgID, incident.Type, incident.Scope, incident.StartedOn, incident.ChannelID)
 	if err != nil && err != sql.ErrNoRows {
-		return NilIncidentID, errors.Wrap(err, "error inserting incident")
+		return NilIncidentID, fmt.Errorf("error inserting incident: %w", err)
 	}
 
 	// if we got back an id, a new incident was actually created
@@ -101,12 +103,12 @@ func getOrCreateIncident(ctx context.Context, db DBorTx, oa *OrgAssets, incident
 		incident.ID = incidentID
 
 		if err := NotifyIncidentStarted(ctx, db, oa, incident); err != nil {
-			return NilIncidentID, errors.Wrap(err, "error creating notifications for new incident")
+			return NilIncidentID, fmt.Errorf("error creating notifications for new incident: %w", err)
 		}
 	} else {
 		err := db.GetContext(ctx, &incidentID, `SELECT id FROM notifications_incident WHERE org_id = $1 AND incident_type = $2 AND scope = $3`, incident.OrgID, incident.Type, incident.Scope)
 		if err != nil {
-			return NilIncidentID, errors.Wrap(err, "error looking up existing incident")
+			return NilIncidentID, fmt.Errorf("error looking up existing incident: %w", err)
 		}
 	}
 
@@ -121,7 +123,7 @@ SELECT id, org_id, incident_type, scope, started_on, ended_on, channel_id
 func GetOpenIncidents(ctx context.Context, db *sqlx.DB, types []IncidentType) ([]*Incident, error) {
 	rows, err := db.QueryxContext(ctx, sqlSelectOpenIncidents, pq.Array(types))
 	if err != nil {
-		return nil, errors.Wrap(err, "error querying open incidents")
+		return nil, fmt.Errorf("error querying open incidents: %w", err)
 	}
 	defer rows.Close()
 
@@ -130,7 +132,7 @@ func GetOpenIncidents(ctx context.Context, db *sqlx.DB, types []IncidentType) ([
 		obj := &Incident{}
 		err := rows.StructScan(obj)
 		if err != nil {
-			return nil, errors.Wrap(err, "error scanning incident")
+			return nil, fmt.Errorf("error scanning incident: %w", err)
 		}
 
 		incidents = append(incidents, obj)
@@ -161,12 +163,12 @@ func (n *WebhookNode) Record(rt *runtime.Runtime, events []*events.WebhookCalled
 
 	if numHealthy > 0 {
 		if err := healthySeries.Record(rc, string(n.UUID), int64(numHealthy)); err != nil {
-			return errors.Wrap(err, "error recording healthy calls")
+			return fmt.Errorf("error recording healthy calls: %w", err)
 		}
 	}
 	if numUnhealthy > 0 {
 		if err := unhealthySeries.Record(rc, string(n.UUID), int64(numUnhealthy)); err != nil {
-			return errors.Wrap(err, "error recording unhealthy calls")
+			return fmt.Errorf("error recording unhealthy calls: %w", err)
 		}
 	}
 
@@ -180,11 +182,11 @@ func (n *WebhookNode) Healthy(rt *runtime.Runtime) (bool, error) {
 	healthySeries, unhealthySeries := n.series()
 	healthy, err := healthySeries.Total(rc, string(n.UUID))
 	if err != nil {
-		return false, errors.Wrap(err, "error getting healthy series total")
+		return false, fmt.Errorf("error getting healthy series total: %w", err)
 	}
 	unhealthy, err := unhealthySeries.Total(rc, string(n.UUID))
 	if err != nil {
-		return false, errors.Wrap(err, "error getting healthy series total")
+		return false, fmt.Errorf("error getting healthy series total: %w", err)
 	}
 
 	// node is healthy if number of unhealthy calls is less than 10 or unhealthy percentage is < 25%

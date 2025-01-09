@@ -8,13 +8,13 @@ import (
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/core/tasks/handler"
+	"github.com/nyaruka/mailroom/core/tasks/handler/ctasks"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/redisx"
-	"github.com/pkg/errors"
 )
 
 func init() {
-	tasks.RegisterCron("sessions_timeouts", false, newTimeoutsCron())
+	tasks.RegisterCron("sessions_timeouts", newTimeoutsCron())
 }
 
 type timeoutsCron struct {
@@ -31,13 +31,17 @@ func (c *timeoutsCron) Next(last time.Time) time.Time {
 	return tasks.CronNext(last, time.Minute)
 }
 
+func (c *timeoutsCron) AllInstances() bool {
+	return false
+}
+
 // timeoutRuns looks for any runs that have timed out and schedules for them to continue
 // TODO: extend lock
 func (c *timeoutsCron) Run(ctx context.Context, rt *runtime.Runtime) (map[string]any, error) {
 	// find all sessions that need to be expired (we exclude IVR runs)
 	rows, err := rt.DB.QueryxContext(ctx, timedoutSessionsSQL)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error selecting timed out sessions")
+		return nil, fmt.Errorf("error selecting timed out sessions: %w", err)
 	}
 	defer rows.Close()
 
@@ -51,14 +55,14 @@ func (c *timeoutsCron) Run(ctx context.Context, rt *runtime.Runtime) (map[string
 	for rows.Next() {
 		err := rows.StructScan(timeout)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error scanning timeout")
+			return nil, fmt.Errorf("error scanning timeout: %w", err)
 		}
 
 		// check whether we've already queued this
 		taskID := fmt.Sprintf("%d:%s", timeout.SessionID, timeout.TimeoutOn.Format(time.RFC3339))
 		queued, err := c.marker.IsMember(rc, taskID)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error checking whether task is queued")
+			return nil, fmt.Errorf("error checking whether task is queued: %w", err)
 		}
 
 		// already queued? move on
@@ -68,16 +72,15 @@ func (c *timeoutsCron) Run(ctx context.Context, rt *runtime.Runtime) (map[string
 		}
 
 		// ok, queue this task
-		task := handler.NewTimeoutTask(timeout.OrgID, timeout.ContactID, timeout.SessionID, timeout.TimeoutOn)
-		err = handler.QueueHandleTask(rc, timeout.ContactID, task)
+		err = handler.QueueTask(rc, timeout.OrgID, timeout.ContactID, ctasks.NewWaitTimeout(timeout.SessionID, timeout.TimeoutOn))
 		if err != nil {
-			return nil, errors.Wrapf(err, "error adding new handle task")
+			return nil, fmt.Errorf("error adding new handle task: %w", err)
 		}
 
 		// and mark it as queued
 		err = c.marker.Add(rc, taskID)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error marking timeout task as queued")
+			return nil, fmt.Errorf("error marking timeout task as queued: %w", err)
 		}
 
 		numQueued++

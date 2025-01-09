@@ -1,0 +1,63 @@
+[
+    {
+        "label": "error if fields not provided",
+        "method": "POST",
+        "path": "/mr/contact/urns",
+        "body": {},
+        "status": 400,
+        "response": {
+            "error": "request failed validation: field 'org_id' is required, field 'urns' is required"
+        }
+    },
+    {
+        "label": "normalizes, validates and resolves urns",
+        "method": "POST",
+        "path": "/mr/contact/urns",
+        "body": {
+            "org_id": 1,
+            "urns": [
+                "tel:+16055741111",
+                "tel:+1 (605) 574 2222",
+                "tel:+1-6055747777",
+                "tel:1234",
+                "tel:[[[",
+                "xyz:2345",
+                "abc"
+            ]
+        },
+        "status": 200,
+        "response": {
+            "urns": [
+                {
+                    "normalized": "tel:+16055741111",
+                    "contact_id": 10000,
+                    "e164": true
+                },
+                {
+                    "normalized": "tel:+16055742222",
+                    "contact_id": 10001,
+                    "e164": true
+                },
+                {
+                    "normalized": "tel:+16055747777",
+                    "e164": true
+                },
+                {
+                    "normalized": "tel:1234"
+                },
+                {
+                    "normalized": "tel:[[[",
+                    "error": "invalid path component"
+                },
+                {
+                    "normalized": "xyz:2345",
+                    "error": "unknown URN scheme"
+                },
+                {
+                    "normalized": ":abc",
+                    "error": "scheme or path cannot be empty"
+                }
+            ]
+        }
+    }
+]

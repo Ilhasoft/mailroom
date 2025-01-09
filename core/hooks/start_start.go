@@ -2,14 +2,14 @@ package hooks
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/nyaruka/mailroom/core/models"
-	"github.com/nyaruka/mailroom/core/queue"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/core/tasks/starts"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
+	"github.com/nyaruka/mailroom/utils/queues"
 )
 
 // StartStartHook is our hook to fire our scene starts
@@ -27,18 +27,18 @@ func (h *startStartHook) Apply(ctx context.Context, rt *runtime.Runtime, tx *sql
 		for _, e := range es {
 			start := e.(*models.FlowStart)
 
-			taskQ := queue.HandlerQueue
-			priority := queue.DefaultPriority
+			taskQ := tasks.HandlerQueue
+			priority := queues.DefaultPriority
 
 			// if we are starting groups, queue to our batch queue instead, but with high priority
 			if len(start.GroupIDs) > 0 || start.Query != "" {
-				taskQ = queue.BatchQueue
-				priority = queue.HighPriority
+				taskQ = tasks.BatchQueue
+				priority = queues.HighPriority
 			}
 
 			err := tasks.Queue(rc, taskQ, oa.OrgID(), &starts.StartFlowTask{FlowStart: start}, priority)
 			if err != nil {
-				return errors.Wrapf(err, "error queuing flow start")
+				return fmt.Errorf("error queuing flow start: %w", err)
 			}
 		}
 	}

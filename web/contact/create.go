@@ -2,13 +2,13 @@ package contact
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/mailroom/web"
-	"github.com/pkg/errors"
 )
 
 func init() {
@@ -38,7 +38,7 @@ type createRequest struct {
 func handleCreate(ctx context.Context, rt *runtime.Runtime, r *createRequest) (any, int, error) {
 	oa, err := models.GetOrgAssets(ctx, rt, r.OrgID)
 	if err != nil {
-		return nil, 0, errors.Wrapf(err, "unable to load org assets")
+		return nil, 0, fmt.Errorf("unable to load org assets: %w", err)
 	}
 
 	c, err := SpecToCreation(r.Contact, oa.Env(), oa.SessionAssets())
@@ -46,15 +46,15 @@ func handleCreate(ctx context.Context, rt *runtime.Runtime, r *createRequest) (a
 		return err, http.StatusBadRequest, nil
 	}
 
-	_, contact, err := models.CreateContact(ctx, rt.DB, oa, r.UserID, c.Name, c.Language, c.URNs)
+	_, contact, err := models.CreateContact(ctx, rt.DB, oa, r.UserID, c.Name, c.Language, c.Status, c.URNs)
 	if err != nil {
-		return err, http.StatusBadRequest, nil
+		return nil, 0, err
 	}
 
 	modifiersByContact := map[*flows.Contact][]flows.Modifier{contact: c.Mods}
 	_, err = models.ApplyModifiers(ctx, rt, oa, r.UserID, modifiersByContact)
 	if err != nil {
-		return nil, 0, errors.Wrap(err, "error modifying new contact")
+		return nil, 0, fmt.Errorf("error modifying new contact: %w", err)
 	}
 
 	return map[string]any{"contact": contact}, http.StatusOK, nil

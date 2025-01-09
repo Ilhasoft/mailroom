@@ -19,6 +19,31 @@
         }
     },
     {
+        "label": "error if broadcast doesn't have any recipients",
+        "method": "POST",
+        "path": "/mr/msg/broadcast",
+        "body": {
+            "org_id": 1,
+            "user_id": 4,
+            "translations": {
+                "eng": {
+                    "text": "Anyone?"
+                }
+            },
+            "base_language": "eng"
+        },
+        "status": 400,
+        "response": {
+            "error": "can't create broadcast with no recipients"
+        },
+        "db_assertions": [
+            {
+                "query": "SELECT count(*) FROM msgs_broadcast WHERE translations->'eng'->>'text' = 'Anyone?'",
+                "count": 0
+            }
+        ]
+    },
+    {
         "label": "create broadcast and return id",
         "method": "POST",
         "path": "/mr/msg/broadcast",
@@ -42,7 +67,11 @@
                 "tel:+1234567890"
             ],
             "query": "age > 20",
-            "optin_id": $polls_id$
+            "optin_id": $polls_id$,
+            "template_id": 10000,
+            "template_variables": [
+                "@contact"
+            ]
         },
         "status": 200,
         "response": {
@@ -50,7 +79,7 @@
         },
         "db_assertions": [
             {
-                "query": "SELECT count(*) FROM msgs_broadcast WHERE translations->'eng'->>'text' = 'Hello' AND base_language = 'eng' AND urns = '{\"tel:+1234567890\"}' AND query = 'age > 20' AND optin_id = $polls_id$",
+                "query": "SELECT count(*) FROM msgs_broadcast WHERE translations->'eng'->>'text' = 'Hello' AND base_language = 'eng' AND urns = '{\"tel:+1234567890\"}' AND query = 'age > 20' AND optin_id = $polls_id$ AND template_id = 10000 AND template_variables = '{\"@contact\"}'",
                 "count": 1
             },
             {
@@ -59,6 +88,177 @@
             },
             {
                 "query": "SELECT count(*) FROM msgs_broadcast_groups WHERE broadcast_id = 1",
+                "count": 1
+            }
+        ]
+    },
+    {
+        "label": "create broadcast for flow node uuid",
+        "method": "POST",
+        "path": "/mr/msg/broadcast",
+        "body": {
+            "org_id": 1,
+            "user_id": 4,
+            "translations": {
+                "eng": {
+                    "text": "Hurry up!"
+                }
+            },
+            "base_language": "eng",
+            "node_uuid": "dd79811e-a88a-4e67-bb47-a132fe8ce3f2"
+        },
+        "status": 200,
+        "response": {
+            "id": 2
+        },
+        "db_assertions": [
+            {
+                "query": "SELECT count(*) FROM msgs_broadcast WHERE translations->'eng'->>'text' = 'Hurry up!' AND base_language = 'eng' AND node_uuid = 'dd79811e-a88a-4e67-bb47-a132fe8ce3f2'",
+                "count": 1
+            }
+        ]
+    },
+    {
+        "label": "create a one off scheduled broadcast",
+        "method": "POST",
+        "path": "/mr/msg/broadcast",
+        "body": {
+            "org_id": 1,
+            "user_id": 4,
+            "translations": {
+                "eng": {
+                    "text": "Remember"
+                }
+            },
+            "base_language": "eng",
+            "contact_ids": [
+                10001
+            ],
+            "schedule": {
+                "start": "2034-06-20T14:05:30Z",
+                "repeat_period": "O"
+            }
+        },
+        "status": 200,
+        "response": {
+            "id": 3
+        },
+        "db_assertions": [
+            {
+                "query": "SELECT count(*) FROM msgs_broadcast WHERE translations->'eng'->>'text' = 'Remember' AND schedule_id IS NOT NULL",
+                "count": 1
+            },
+            {
+                "query": "SELECT count(*) FROM schedules_schedule WHERE repeat_period = 'O' AND repeat_hour_of_day IS NULL AND repeat_minute_of_hour IS NULL AND repeat_days_of_week IS NULL AND repeat_day_of_month IS NULL AND next_fire = '2034-06-20T14:05:30Z'",
+                "count": 1
+            }
+        ]
+    },
+    {
+        "label": "create a daily repeating scheduled broadcast",
+        "method": "POST",
+        "path": "/mr/msg/broadcast",
+        "body": {
+            "org_id": 1,
+            "user_id": 4,
+            "translations": {
+                "spa": {
+                    "text": "Buenos días"
+                }
+            },
+            "base_language": "spa",
+            "contact_ids": [
+                10001
+            ],
+            "schedule": {
+                "start": "2034-06-20T14:05:30Z",
+                "repeat_period": "D"
+            }
+        },
+        "status": 200,
+        "response": {
+            "id": 4
+        },
+        "db_assertions": [
+            {
+                "query": "SELECT count(*) FROM msgs_broadcast WHERE translations->'spa'->>'text' = 'Buenos días' AND schedule_id IS NOT NULL",
+                "count": 1
+            },
+            {
+                "query": "SELECT count(*) FROM schedules_schedule WHERE repeat_period = 'D' AND repeat_hour_of_day = 7 AND repeat_minute_of_hour = 5 AND repeat_days_of_week IS NULL AND repeat_day_of_month IS NULL AND next_fire = '2034-06-20T14:05:30Z'",
+                "count": 1
+            }
+        ]
+    },
+    {
+        "label": "create a weekly repeating scheduled broadcast",
+        "method": "POST",
+        "path": "/mr/msg/broadcast",
+        "body": {
+            "org_id": 1,
+            "user_id": 4,
+            "translations": {
+                "eng": {
+                    "text": "Happy Monday"
+                }
+            },
+            "base_language": "eng",
+            "contact_ids": [
+                10001
+            ],
+            "schedule": {
+                "start": "2034-06-20T14:05:30Z",
+                "repeat_period": "W",
+                "repeat_days_of_week": "M"
+            }
+        },
+        "status": 200,
+        "response": {
+            "id": 5
+        },
+        "db_assertions": [
+            {
+                "query": "SELECT count(*) FROM msgs_broadcast WHERE translations->'eng'->>'text' = 'Happy Monday' AND schedule_id IS NOT NULL",
+                "count": 1
+            },
+            {
+                "query": "SELECT count(*) FROM schedules_schedule WHERE repeat_period = 'W' AND repeat_hour_of_day = 7 AND repeat_minute_of_hour = 5 AND repeat_days_of_week = 'M' AND repeat_day_of_month IS NULL AND next_fire = '2034-06-20T14:05:30Z'",
+                "count": 1
+            }
+        ]
+    },
+    {
+        "label": "create a monthly repeating scheduled broadcast",
+        "method": "POST",
+        "path": "/mr/msg/broadcast",
+        "body": {
+            "org_id": 1,
+            "user_id": 4,
+            "translations": {
+                "eng": {
+                    "text": "Happy Month"
+                }
+            },
+            "base_language": "eng",
+            "contact_ids": [
+                10001
+            ],
+            "schedule": {
+                "start": "2034-06-20T14:05:30Z",
+                "repeat_period": "M"
+            }
+        },
+        "status": 200,
+        "response": {
+            "id": 6
+        },
+        "db_assertions": [
+            {
+                "query": "SELECT count(*) FROM msgs_broadcast WHERE translations->'eng'->>'text' = 'Happy Month' AND schedule_id IS NOT NULL",
+                "count": 1
+            },
+            {
+                "query": "SELECT count(*) FROM schedules_schedule WHERE repeat_period = 'M' AND repeat_hour_of_day = 7 AND repeat_minute_of_hour = 5 AND repeat_days_of_week IS NULL AND repeat_day_of_month = 20 AND next_fire = '2034-06-20T14:05:30Z'",
                 "count": 1
             }
         ]

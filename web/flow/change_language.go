@@ -3,13 +3,13 @@ package flow
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/nyaruka/gocommon/i18n"
 	"github.com/nyaruka/mailroom/core/goflow"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/mailroom/web"
-	"github.com/pkg/errors"
 )
 
 func init() {
@@ -30,12 +30,12 @@ type changeLanguageRequest struct {
 func handleChangeLanguage(ctx context.Context, rt *runtime.Runtime, r *changeLanguageRequest) (any, int, error) {
 	flow, err := goflow.ReadFlow(rt.Config, r.Flow)
 	if err != nil {
-		return errors.Wrapf(err, "unable to read flow"), http.StatusUnprocessableEntity, nil
+		return nil, 0, fmt.Errorf("unable to read flow: %w", err)
 	}
 
 	copy, err := flow.ChangeLanguage(r.Language)
 	if err != nil {
-		return errors.Wrapf(err, "unable to change flow language"), http.StatusUnprocessableEntity, nil
+		return nil, 0, fmt.Errorf("unable to change flow language: %w", err)
 	}
 
 	return copy, http.StatusOK, nil

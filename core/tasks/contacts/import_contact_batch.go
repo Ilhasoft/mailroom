@@ -9,7 +9,6 @@ import (
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
 )
 
 // TypeImportContactBatch is the type of the import contact batch task
@@ -33,19 +32,23 @@ func (t *ImportContactBatchTask) Timeout() time.Duration {
 	return time.Minute * 10
 }
 
+func (t *ImportContactBatchTask) WithAssets() models.Refresh {
+	return models.RefreshFields | models.RefreshGroups
+}
+
 // Perform figures out the membership for a query based group then repopulates it
-func (t *ImportContactBatchTask) Perform(ctx context.Context, rt *runtime.Runtime, orgID models.OrgID) error {
+func (t *ImportContactBatchTask) Perform(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets) error {
 	batch, err := models.LoadContactImportBatch(ctx, rt.DB, t.ContactImportBatchID)
 	if err != nil {
-		return errors.Wrap(err, "error loading contact import batch")
+		return fmt.Errorf("error loading contact import batch: %w", err)
 	}
 
 	imp, err := models.LoadContactImport(ctx, rt.DB, batch.ImportID)
 	if err != nil {
-		return errors.Wrap(err, "error loading contact import")
+		return fmt.Errorf("error loading contact import: %w", err)
 	}
 
-	batchErr := batch.Import(ctx, rt, orgID, imp.CreatedByID)
+	batchErr := batch.Import(ctx, rt, oa, imp.CreatedByID)
 
 	// decrement the redis key that holds remaining batches to see if the overall import is now finished
 	rc := rt.RP.Get()
@@ -62,13 +65,17 @@ func (t *ImportContactBatchTask) Perform(ctx context.Context, rt *runtime.Runtim
 		}
 
 		if err := imp.MarkFinished(ctx, rt.DB, status); err != nil {
-			return errors.Wrap(err, "error marking import as finished")
+			return fmt.Errorf("error marking import as finished: %w", err)
 		}
 
 		if err := models.NotifyImportFinished(ctx, rt.DB, imp); err != nil {
-			return errors.Wrap(err, "error creating import finished notification")
+			return fmt.Errorf("error creating import finished notification: %w", err)
 		}
 	}
 
-	return errors.Wrapf(batchErr, "unable to import contact import batch %d", t.ContactImportBatchID)
+	if batchErr != nil {
+		return fmt.Errorf("unable to import contact import batch %d: %w", t.ContactImportBatchID, err)
+	}
+
+	return nil
 }

@@ -2,15 +2,17 @@ package models
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/nyaruka/gocommon/jsonx"
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/goflow/flows/events"
+	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/null/v3"
-	"github.com/pkg/errors"
 )
 
 type FlowRunID int64
@@ -106,7 +108,7 @@ func newRun(ctx context.Context, tx *sqlx.Tx, oa *OrgAssets, session *Session, f
 
 	flowID, err := FlowIDForUUID(ctx, tx, oa, fr.FlowReference().UUID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "unable to load flow with uuid: %s", fr.FlowReference().UUID)
+		return nil, fmt.Errorf("unable to load flow with uuid: %s: %w", fr.FlowReference().UUID, err)
 	}
 
 	// create our run
@@ -139,4 +141,27 @@ func newRun(ctx context.Context, tx *sqlx.Tx, oa *OrgAssets, session *Session, f
 	}
 
 	return run, nil
+}
+
+// GetContactIDsAtNode returns the ids of contacts currently waiting or active at the given flow node
+func GetContactIDsAtNode(ctx context.Context, rt *runtime.Runtime, orgID OrgID, nodeUUID flows.NodeUUID) ([]ContactID, error) {
+	rows, err := rt.ReadonlyDB.QueryContext(ctx,
+		`SELECT contact_id FROM flows_flowrun WHERE org_id = $1 AND current_node_uuid = $2 AND status IN ('A' , 'W')`, orgID, nodeUUID,
+	)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("error querying contacts at node: %w", err)
+	}
+	defer rows.Close()
+
+	contactIDs := make([]ContactID, 0, 10)
+
+	for rows.Next() {
+		var id ContactID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("error scanning contact id: %w", err)
+		}
+		contactIDs = append(contactIDs, id)
+	}
+
+	return contactIDs, nil
 }

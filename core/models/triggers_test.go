@@ -165,8 +165,8 @@ func TestFindMatchingMsgTrigger(t *testing.T) {
 	_, george, _ := testdata.George.Load(rt, oa)
 	_, bob, _ := testdata.Bob.Load(rt, oa)
 
-	twilioChannels, _ := models.GetChannelsByID(ctx, rt.DB.DB, []models.ChannelID{testdata.TwilioChannel.ID})
-	facebookChannels, _ := models.GetChannelsByID(ctx, rt.DB.DB, []models.ChannelID{testdata.FacebookChannel.ID})
+	twilioChannel, _ := models.GetChannelByID(ctx, rt.DB.DB, testdata.TwilioChannel.ID)
+	facebookChannel, _ := models.GetChannelByID(ctx, rt.DB.DB, testdata.FacebookChannel.ID)
 
 	tcs := []struct {
 		text              string
@@ -177,13 +177,13 @@ func TestFindMatchingMsgTrigger(t *testing.T) {
 	}{
 		{" join ", nil, cathy, joinID, "join"},
 		{"JOIN", nil, cathy, joinID, "join"},
-		{"JOIN", twilioChannels[0], cathy, joinTwilioOnlyID, "join"},
-		{"JOIN", facebookChannels[0], cathy, joinID, "join"},
+		{"JOIN", twilioChannel, cathy, joinTwilioOnlyID, "join"},
+		{"JOIN", facebookChannel, cathy, joinID, "join"},
 		{"join this", nil, cathy, joinID, "join"},
 		{"resist", nil, george, resistID, "resist"},
-		{"resist", twilioChannels[0], george, resistTwilioOnlyID, "resist"},
+		{"resist", twilioChannel, george, resistTwilioOnlyID, "resist"},
 		{"resist", nil, bob, doctorsID, "resist"},
-		{"resist", twilioChannels[0], cathy, resistTwilioOnlyID, "resist"},
+		{"resist", twilioChannel, cathy, resistTwilioOnlyID, "resist"},
 		{"resist", nil, cathy, doctorsAndNotTestersID, "resist"},
 		{"resist this", nil, cathy, doctorsCatchallID, ""},
 		{" 👍 ", nil, george, emojiID, "👍"},
@@ -192,10 +192,10 @@ func TestFindMatchingMsgTrigger(t *testing.T) {
 		{"other", nil, cathy, doctorsCatchallID, ""},
 		{"other", nil, george, othersAllID, ""},
 		{"", nil, george, othersAllID, ""},
-		{"start", twilioChannels[0], cathy, startTwilioOnlyID, "start"},
-		{"start", facebookChannels[0], cathy, doctorsCatchallID, ""},
-		{"start", twilioChannels[0], george, startTwilioOnlyID, "start"},
-		{"start", facebookChannels[0], george, othersAllID, ""},
+		{"start", twilioChannel, cathy, startTwilioOnlyID, "start"},
+		{"start", facebookChannel, cathy, doctorsCatchallID, ""},
+		{"start", twilioChannel, george, startTwilioOnlyID, "start"},
+		{"start", facebookChannel, george, othersAllID, ""},
 	}
 
 	for _, tc := range tcs {
@@ -228,20 +228,20 @@ func TestFindMatchingIncomingCallTrigger(t *testing.T) {
 	_, george, _ := testdata.George.Load(rt, oa)
 	_, alexa, _ := testdata.Alexandria.Load(rt, oa)
 
-	twilioChannels, _ := models.GetChannelsByID(ctx, rt.DB.DB, []models.ChannelID{testdata.TwilioChannel.ID})
-	facebookChannels, _ := models.GetChannelsByID(ctx, rt.DB.DB, []models.ChannelID{testdata.FacebookChannel.ID})
+	twilioChannel, _ := models.GetChannelByID(ctx, rt.DB.DB, testdata.TwilioChannel.ID)
+	facebookChannel, _ := models.GetChannelByID(ctx, rt.DB.DB, testdata.FacebookChannel.ID)
 
 	tcs := []struct {
 		contact           *flows.Contact
 		channel           *models.Channel
 		expectedTriggerID models.TriggerID
 	}{
-		{cathy, twilioChannels[0], specificChannelTriggerID},        // specific channel
-		{cathy, facebookChannels[0], doctorsAndNotTestersTriggerID}, // not matching channel, get the next best scored channel
-		{cathy, nil, doctorsAndNotTestersTriggerID},                 // they're in doctors and not in testers
-		{bob, nil, doctorsTriggerID},                                // they're in doctors and testers
-		{george, nil, notTestersTriggerID},                          // they're not in doctors and not in testers
-		{alexa, nil, everyoneTriggerID},                             // they're not in doctors but are in testers
+		{cathy, twilioChannel, specificChannelTriggerID},        // specific channel
+		{cathy, facebookChannel, doctorsAndNotTestersTriggerID}, // not matching channel, get the next best scored channel
+		{cathy, nil, doctorsAndNotTestersTriggerID},             // they're in doctors and not in testers
+		{bob, nil, doctorsTriggerID},                            // they're in doctors and testers
+		{george, nil, notTestersTriggerID},                      // they're not in doctors and not in testers
+		{alexa, nil, everyoneTriggerID},                         // they're not in doctors but are in testers
 	}
 
 	for _, tc := range tcs {
@@ -278,9 +278,9 @@ func TestFindMatchingMissedCallTrigger(t *testing.T) {
 	oa, err = models.GetOrgAssetsWithRefresh(ctx, rt, testdata.Org1.ID, models.RefreshTriggers)
 	require.NoError(t, err)
 
-	channels, _ := models.GetChannelsByID(ctx, rt.DB.DB, []models.ChannelID{testdata.TwilioChannel.ID})
+	channel, _ := models.GetChannelByID(ctx, rt.DB.DB, testdata.TwilioChannel.ID)
 
-	trigger = models.FindMatchingMissedCallTrigger(oa, channels[0])
+	trigger = models.FindMatchingMissedCallTrigger(oa, channel)
 	assertTrigger(t, triggerIDwithChannel, trigger)
 
 }

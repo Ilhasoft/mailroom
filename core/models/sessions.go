@@ -23,7 +23,6 @@ import (
 	"github.com/nyaruka/mailroom/core/goflow"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/null/v3"
-	"github.com/pkg/errors"
 )
 
 type SessionID int64
@@ -181,10 +180,10 @@ func (s *Session) Call() *Call {
 }
 
 // FlowSession creates a flow session for the passed in session object. It also populates the runs we know about
-func (s *Session) FlowSession(cfg *runtime.Config, sa flows.SessionAssets, env envs.Environment) (flows.Session, error) {
-	session, err := goflow.Engine(cfg).ReadSession(sa, json.RawMessage(s.s.Output), assets.IgnoreMissing)
+func (s *Session) FlowSession(ctx context.Context, rt *runtime.Runtime, sa flows.SessionAssets, env envs.Environment) (flows.Session, error) {
+	session, err := goflow.Engine(rt).ReadSession(sa, json.RawMessage(s.s.Output), assets.IgnoreMissing)
 	if err != nil {
-		return nil, errors.Wrapf(err, "unable to unmarshal session")
+		return nil, fmt.Errorf("unable to unmarshal session: %w", err)
 	}
 
 	// walk through our session, populate seen runs
@@ -295,19 +294,19 @@ WHERE
 func (s *Session) Update(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *OrgAssets, fs flows.Session, sprint flows.Sprint, contact *Contact, hook SessionCommitHook) error {
 	// make sure we have our seen runs
 	if s.seenRuns == nil {
-		return errors.Errorf("missing seen runs, cannot update session")
+		return fmt.Errorf("missing seen runs, cannot update session")
 	}
 
 	output, err := json.Marshal(fs)
 	if err != nil {
-		return errors.Wrapf(err, "error marshalling flow session")
+		return fmt.Errorf("error marshalling flow session: %w", err)
 	}
 	s.s.Output = null.String(output)
 
 	// map our status over
 	status, found := sessionStatusMap[fs.Status()]
 	if !found {
-		return errors.Errorf("unknown session status: %s", fs.Status())
+		return fmt.Errorf("unknown session status: %s", fs.Status())
 	}
 	s.s.Status = status
 
@@ -320,7 +319,7 @@ func (s *Session) Update(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, 
 	for _, r := range fs.Runs() {
 		run, err := newRun(ctx, tx, oa, s, r)
 		if err != nil {
-			return errors.Wrapf(err, "error creating run: %s", r.UUID())
+			return fmt.Errorf("error creating run: %s: %w", r.UUID(), err)
 		}
 
 		// set the run on our session
@@ -341,7 +340,7 @@ func (s *Session) Update(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, 
 		if r.Status() == flows.RunStatusWaiting {
 			flowID, err := FlowIDForUUID(ctx, tx, oa, r.FlowReference().UUID)
 			if err != nil {
-				return errors.Wrapf(err, "error loading flow: %s", r.FlowReference().UUID)
+				return fmt.Errorf("error loading flow: %s: %w", r.FlowReference().UUID, err)
 			}
 			s.s.CurrentFlowID = flowID
 		}
@@ -362,7 +361,7 @@ func (s *Session) Update(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, 
 	for _, e := range sprint.Events() {
 		err := ApplyPreWriteEvent(ctx, rt, tx, oa, s.scene, e)
 		if err != nil {
-			return errors.Wrapf(err, "error applying event: %v", e)
+			return fmt.Errorf("error applying event: %v: %w", e, err)
 		}
 	}
 
@@ -383,7 +382,7 @@ func (s *Session) Update(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, 
 	// write our new session state to the db
 	_, err = tx.NamedExecContext(ctx, updateSQL, s.s)
 	if err != nil {
-		return errors.Wrapf(err, "error updating session")
+		return fmt.Errorf("error updating session: %w", err)
 	}
 
 	// if this session is complete, so is any associated connection
@@ -391,7 +390,7 @@ func (s *Session) Update(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, 
 		if s.Status() == SessionStatusCompleted || s.Status() == SessionStatusFailed {
 			err := s.call.UpdateStatus(ctx, tx, CallStatusCompleted, 0, time.Now())
 			if err != nil {
-				return errors.Wrapf(err, "error update channel connection")
+				return fmt.Errorf("error update channel connection: %w", err)
 			}
 		}
 	}
@@ -416,7 +415,7 @@ func (s *Session) Update(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, 
 	if hook != nil {
 		err := hook(ctx, tx, rt.RP, oa, []*Session{s})
 		if err != nil {
-			return errors.Wrapf(err, "error calling commit hook: %v", hook)
+			return fmt.Errorf("error calling commit hook: %v: %w", hook, err)
 		}
 	}
 
@@ -424,17 +423,17 @@ func (s *Session) Update(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, 
 	err = BulkQuery(ctx, "update runs", tx, sqlUpdateRun, updatedRuns)
 	if err != nil {
 		slog.Error("error while updating runs for session", "error", err, "session", string(output))
-		return errors.Wrapf(err, "error updating runs")
+		return fmt.Errorf("error updating runs: %w", err)
 	}
 
 	// insert all new runs at once
 	err = BulkQuery(ctx, "insert runs", tx, sqlInsertRun, newRuns)
 	if err != nil {
-		return errors.Wrapf(err, "error writing runs")
+		return fmt.Errorf("error writing runs: %w", err)
 	}
 
 	if err := RecordFlowStatistics(ctx, rt, tx, []flows.Session{fs}, []flows.Sprint{sprint}); err != nil {
-		return errors.Wrapf(err, "error saving flow statistics")
+		return fmt.Errorf("error saving flow statistics: %w", err)
 	}
 
 	var eventsToHandle []flows.Event
@@ -449,13 +448,13 @@ func (s *Session) Update(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, 
 	// apply all our events to generate hooks
 	err = HandleEvents(ctx, rt, tx, oa, s.scene, eventsToHandle)
 	if err != nil {
-		return errors.Wrapf(err, "error applying events: %d", s.ID())
+		return fmt.Errorf("error applying events: %d: %w", s.ID(), err)
 	}
 
 	// gather all our pre commit events, group them by hook and apply them
 	err = ApplyEventPreCommitHooks(ctx, rt, tx, oa, []*Scene{s.scene})
 	if err != nil {
-		return errors.Wrapf(err, "error applying pre commit hook: %T", hook)
+		return fmt.Errorf("error applying pre commit hook: %T: %w", hook, err)
 	}
 
 	return nil
@@ -469,7 +468,9 @@ func (s *Session) ClearWaitTimeout(ctx context.Context, db *sqlx.DB) error {
 
 	if db != nil {
 		_, err := db.ExecContext(ctx, `UPDATE flows_flowsession SET timeout_on = NULL WHERE id = $1`, s.ID())
-		return errors.Wrap(err, "error clearing wait timeout")
+		if err != nil {
+			return fmt.Errorf("error clearing wait timeout: %w", err)
+		}
 	}
 	return nil
 }
@@ -489,24 +490,24 @@ func (s *Session) UnmarshalJSON(b []byte) error {
 func NewSession(ctx context.Context, tx *sqlx.Tx, oa *OrgAssets, fs flows.Session, sprint flows.Sprint) (*Session, error) {
 	output, err := json.Marshal(fs)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error marshalling flow session")
+		return nil, fmt.Errorf("error marshalling flow session: %w", err)
 	}
 
 	// map our status over
 	sessionStatus, found := sessionStatusMap[fs.Status()]
 	if !found {
-		return nil, errors.Errorf("unknown session status: %s", fs.Status())
+		return nil, fmt.Errorf("unknown session status: %s", fs.Status())
 	}
 
 	// session must have at least one run
 	if len(fs.Runs()) < 1 {
-		return nil, errors.Errorf("cannot write session that has no runs")
+		return nil, fmt.Errorf("cannot write session that has no runs")
 	}
 
 	// figure out our type
 	sessionType, found := flowTypeMapping[fs.Type()]
 	if !found {
-		return nil, errors.Errorf("unknown flow type: %s", fs.Type())
+		return nil, fmt.Errorf("unknown flow type: %s", fs.Type())
 	}
 
 	uuid := fs.UUID()
@@ -541,7 +542,7 @@ func NewSession(ctx context.Context, tx *sqlx.Tx, oa *OrgAssets, fs flows.Sessio
 	for _, r := range fs.Runs() {
 		run, err := newRun(ctx, tx, oa, session, r)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error creating run: %s", r.UUID())
+			return nil, fmt.Errorf("error creating run: %s: %w", r.UUID(), err)
 		}
 
 		// save the run to our session
@@ -551,7 +552,7 @@ func NewSession(ctx context.Context, tx *sqlx.Tx, oa *OrgAssets, fs flows.Sessio
 		if r.Status() == flows.RunStatusWaiting {
 			flowID, err := FlowIDForUUID(ctx, tx, oa, r.FlowReference().UUID)
 			if err != nil {
-				return nil, errors.Wrapf(err, "error loading current flow for UUID: %s", r.FlowReference().UUID)
+				return nil, fmt.Errorf("error loading current flow for UUID: %s: %w", r.FlowReference().UUID, err)
 			}
 			s.CurrentFlowID = flowID
 		}
@@ -603,7 +604,7 @@ func InsertSessions(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *O
 	for i, s := range ss {
 		session, err := NewSession(ctx, tx, oa, s, sprints[i])
 		if err != nil {
-			return nil, errors.Wrapf(err, "error creating session objects")
+			return nil, fmt.Errorf("error creating session objects: %w", err)
 		}
 		sessions = append(sessions, session)
 
@@ -622,7 +623,7 @@ func InsertSessions(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *O
 		for _, e := range sprints[i].Events() {
 			err := ApplyPreWriteEvent(ctx, rt, tx, oa, sessions[i].scene, e)
 			if err != nil {
-				return nil, errors.Wrapf(err, "error applying event: %v", e)
+				return nil, fmt.Errorf("error applying event: %v: %w", e, err)
 			}
 		}
 	}
@@ -631,7 +632,7 @@ func InsertSessions(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *O
 	if hook != nil {
 		err := hook(ctx, tx, rt.RP, oa, sessions)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error calling commit hook: %v", hook)
+			return nil, fmt.Errorf("error calling commit hook: %v: %w", hook, err)
 		}
 	}
 
@@ -643,7 +644,7 @@ func InsertSessions(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *O
 	if rt.Config.SessionStorage == "s3" {
 		err := WriteSessionOutputsToStorage(ctx, rt, sessions)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error writing sessions to storage")
+			return nil, fmt.Errorf("error writing sessions to storage: %w", err)
 		}
 
 		insertEndedSQL = sqlInsertEndedSessionNoOutput
@@ -653,19 +654,19 @@ func InsertSessions(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *O
 	// insert our ended sessions first
 	err := BulkQuery(ctx, "insert ended sessions", tx, insertEndedSQL, endedSessionsI)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error inserting ended sessions")
+		return nil, fmt.Errorf("error inserting ended sessions: %w", err)
 	}
 
 	// mark any connections that are done as complete as well
 	err = BulkUpdateCallStatuses(ctx, tx, completedCallIDs, CallStatusCompleted)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error updating channel connections to complete")
+		return nil, fmt.Errorf("error updating channel connections to complete: %w", err)
 	}
 
 	// insert waiting sessions
 	err = BulkQuery(ctx, "insert waiting sessions", tx, insertWaitingSQL, waitingSessionsI)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error inserting waiting sessions")
+		return nil, fmt.Errorf("error inserting waiting sessions: %w", err)
 	}
 
 	// for each session associate our run with each
@@ -682,11 +683,11 @@ func InsertSessions(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *O
 	// insert all runs
 	err = BulkQuery(ctx, "insert runs", tx, sqlInsertRun, runs)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error writing runs")
+		return nil, fmt.Errorf("error writing runs: %w", err)
 	}
 
 	if err := RecordFlowStatistics(ctx, rt, tx, ss, sprints); err != nil {
-		return nil, errors.Wrapf(err, "error saving flow statistics")
+		return nil, fmt.Errorf("error saving flow statistics: %w", err)
 	}
 
 	// apply our all events for the session
@@ -703,7 +704,7 @@ func InsertSessions(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *O
 
 		err = HandleEvents(ctx, rt, tx, oa, s.Scene(), eventsToHandle)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error applying events for session: %d", s.ID())
+			return nil, fmt.Errorf("error applying events for session: %d: %w", s.ID(), err)
 		}
 
 		scenes = append(scenes, s.Scene())
@@ -712,7 +713,7 @@ func InsertSessions(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *O
 	// gather all our pre commit events, group them by hook
 	err = ApplyEventPreCommitHooks(ctx, rt, tx, oa, scenes)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error applying pre commit hook: %T", hook)
+		return nil, fmt.Errorf("error applying pre commit hook: %T: %w", hook, err)
 	}
 
 	// return our session
@@ -753,7 +754,7 @@ LIMIT 1
 func FindWaitingSessionForContact(ctx context.Context, db *sqlx.DB, st storage.Storage, oa *OrgAssets, sessionType FlowType, contact *flows.Contact) (*Session, error) {
 	rows, err := db.QueryxContext(ctx, sqlSelectWaitingSessionForContact, sessionType, contact.ID())
 	if err != nil {
-		return nil, errors.Wrapf(err, "error selecting waiting session")
+		return nil, fmt.Errorf("error selecting waiting session: %w", err)
 	}
 	defer rows.Close()
 
@@ -769,7 +770,7 @@ func FindWaitingSessionForContact(ctx context.Context, db *sqlx.DB, st storage.S
 	session.scene = NewSceneForSession(session)
 
 	if err := rows.StructScan(&session.s); err != nil {
-		return nil, errors.Wrapf(err, "error scanning session")
+		return nil, fmt.Errorf("error scanning session: %w", err)
 	}
 
 	// load our output from storage if necessary
@@ -777,14 +778,14 @@ func FindWaitingSessionForContact(ctx context.Context, db *sqlx.DB, st storage.S
 		// strip just the path out of our output URL
 		u, err := url.Parse(session.OutputURL())
 		if err != nil {
-			return nil, errors.Wrapf(err, "error parsing output URL: %s", session.OutputURL())
+			return nil, fmt.Errorf("error parsing output URL: %s: %w", session.OutputURL(), err)
 		}
 
 		start := time.Now()
 
 		_, output, err := st.Get(ctx, u.Path)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error reading session from storage: %s", session.OutputURL())
+			return nil, fmt.Errorf("error reading session from storage: %s: %w", session.OutputURL(), err)
 		}
 
 		slog.Debug("loaded session from storage", "elapsed", time.Since(start), "output_url", session.OutputURL())
@@ -810,7 +811,7 @@ func WriteSessionOutputsToStorage(ctx context.Context, rt *runtime.Runtime, sess
 
 	err := rt.SessionStorage.BatchPut(ctx, uploads)
 	if err != nil {
-		return errors.Wrapf(err, "error writing sessions to storage")
+		return fmt.Errorf("error writing sessions to storage: %w", err)
 	}
 
 	for i, s := range sessions {
@@ -837,7 +838,7 @@ func GetSessionWaitExpiresOn(ctx context.Context, db *sqlx.DB, sessionID Session
 		return nil, nil
 	}
 	if err != nil {
-		return nil, errors.Wrapf(err, "error selecting wait_expires_on for session #%d", sessionID)
+		return nil, fmt.Errorf("error selecting wait_expires_on for session #%d: %w", sessionID, err)
 	}
 	return &expiresOn, nil
 }
@@ -852,15 +853,15 @@ func ExitSessions(ctx context.Context, db *sqlx.DB, sessionIDs []SessionID, stat
 	for _, idBatch := range ChunkSlice(sessionIDs, 100) {
 		tx, err := db.BeginTxx(ctx, nil)
 		if err != nil {
-			return errors.Wrapf(err, "error starting transaction to exit sessions")
+			return fmt.Errorf("error starting transaction to exit sessions: %w", err)
 		}
 
 		if err := exitSessionBatch(ctx, tx, idBatch, status); err != nil {
-			return errors.Wrapf(err, "error exiting batch of sessions")
+			return fmt.Errorf("error exiting batch of sessions: %w", err)
 		}
 
 		if err := tx.Commit(); err != nil {
-			return errors.Wrapf(err, "error committing session exits")
+			return fmt.Errorf("error committing session exits: %w", err)
 		}
 	}
 
@@ -893,7 +894,7 @@ func exitSessionBatch(ctx context.Context, tx *sqlx.Tx, sessionIDs []SessionID, 
 
 	err := tx.SelectContext(ctx, &contactIDs, sqlExitSessions, pq.Array(sessionIDs), time.Now(), status)
 	if err != nil {
-		return errors.Wrapf(err, "error exiting sessions")
+		return fmt.Errorf("error exiting sessions: %w", err)
 	}
 
 	slog.Debug("exited session batch", "count", len(contactIDs), "elapsed", time.Since(start))
@@ -903,7 +904,7 @@ func exitSessionBatch(ctx context.Context, tx *sqlx.Tx, sessionIDs []SessionID, 
 
 	res, err := tx.ExecContext(ctx, sqlExitSessionRuns, pq.Array(sessionIDs), time.Now(), runStatus)
 	if err != nil {
-		return errors.Wrapf(err, "error exiting session runs")
+		return fmt.Errorf("error exiting session runs: %w", err)
 	}
 
 	rows, _ := res.RowsAffected()
@@ -914,7 +915,7 @@ func exitSessionBatch(ctx context.Context, tx *sqlx.Tx, sessionIDs []SessionID, 
 
 	res, err = tx.ExecContext(ctx, sqlExitSessionContacts, pq.Array(contactIDs))
 	if err != nil {
-		return errors.Wrapf(err, "error exiting sessions")
+		return fmt.Errorf("error exiting sessions: %w", err)
 	}
 
 	rows, _ = res.RowsAffected()
@@ -928,7 +929,7 @@ func getWaitingSessionsForContacts(ctx context.Context, db DBorTx, contactIDs []
 
 	err := db.SelectContext(ctx, &sessionIDs, `SELECT id FROM flows_flowsession WHERE status = 'W' AND contact_id = ANY($1)`, pq.Array(contactIDs))
 	if err != nil {
-		return nil, errors.Wrapf(err, "error selecting waiting sessions for contacts")
+		return nil, fmt.Errorf("error selecting waiting sessions for contacts: %w", err)
 	}
 
 	return sessionIDs, nil
@@ -941,7 +942,11 @@ func InterruptSessionsForContacts(ctx context.Context, db *sqlx.DB, contactIDs [
 		return 0, err
 	}
 
-	return len(sessionIDs), errors.Wrapf(ExitSessions(ctx, db, sessionIDs, SessionStatusInterrupted), "error exiting sessions")
+	if err := ExitSessions(ctx, db, sessionIDs, SessionStatusInterrupted); err != nil {
+		return 0, fmt.Errorf("error exiting sessions: %w", err)
+	}
+
+	return len(sessionIDs), nil
 }
 
 // InterruptSessionsForContactsTx interrupts any waiting sessions for the given contacts inside the given transaction.
@@ -952,7 +957,11 @@ func InterruptSessionsForContactsTx(ctx context.Context, tx *sqlx.Tx, contactIDs
 		return err
 	}
 
-	return errors.Wrapf(exitSessionBatch(ctx, tx, sessionIDs, SessionStatusInterrupted), "error exiting sessions")
+	if err := exitSessionBatch(ctx, tx, sessionIDs, SessionStatusInterrupted); err != nil {
+		return fmt.Errorf("error exiting sessions: %w", err)
+	}
+
+	return nil
 }
 
 const sqlWaitingSessionIDsForChannel = `
@@ -967,10 +976,14 @@ func InterruptSessionsForChannel(ctx context.Context, db *sqlx.DB, channelID Cha
 
 	err := db.SelectContext(ctx, &sessionIDs, sqlWaitingSessionIDsForChannel, channelID)
 	if err != nil {
-		return errors.Wrapf(err, "error selecting waiting sessions for channel %d", channelID)
+		return fmt.Errorf("error selecting waiting sessions for channel %d: %w", channelID, err)
 	}
 
-	return errors.Wrapf(ExitSessions(ctx, db, sessionIDs, SessionStatusInterrupted), "error exiting sessions")
+	if err := ExitSessions(ctx, db, sessionIDs, SessionStatusInterrupted); err != nil {
+		return fmt.Errorf("error exiting sessions: %w", err)
+	}
+
+	return nil
 }
 
 const sqlWaitingSessionIDsForFlows = `
@@ -988,8 +1001,12 @@ func InterruptSessionsForFlows(ctx context.Context, db *sqlx.DB, flowIDs []FlowI
 
 	err := db.SelectContext(ctx, &sessionIDs, sqlWaitingSessionIDsForFlows, pq.Array(flowIDs))
 	if err != nil {
-		return errors.Wrapf(err, "error selecting waiting sessions for flows")
+		return fmt.Errorf("error selecting waiting sessions for flows: %w", err)
 	}
 
-	return errors.Wrapf(ExitSessions(ctx, db, sessionIDs, SessionStatusInterrupted), "error exiting sessions")
+	if err := ExitSessions(ctx, db, sessionIDs, SessionStatusInterrupted); err != nil {
+		return fmt.Errorf("error exiting sessions: %w", err)
+	}
+
+	return nil
 }

@@ -4,13 +4,14 @@ import (
 	"context"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
+	"fmt"
 
 	"github.com/nyaruka/gocommon/jsonx"
 	"github.com/nyaruka/gocommon/urns"
 	"github.com/nyaruka/gocommon/uuids"
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/null/v3"
-	"github.com/pkg/errors"
 )
 
 // StartID is our type for flow start idst
@@ -158,19 +159,28 @@ func (s *FlowStart) WithParams(params json.RawMessage) *FlowStart {
 // MarkStartStarted sets the status for the passed in flow start to S and updates the contact count on it
 func MarkStartStarted(ctx context.Context, db DBorTx, startID StartID, contactCount int) error {
 	_, err := db.ExecContext(ctx, "UPDATE flows_flowstart SET status = 'S', contact_count = $2, modified_on = NOW() WHERE id = $1", startID, contactCount)
-	return errors.Wrapf(err, "error setting start as started")
+	if err != nil {
+		return fmt.Errorf("error setting start as started: %w", err)
+	}
+	return nil
 }
 
 // MarkStartComplete sets the status for the passed in flow start
 func MarkStartComplete(ctx context.Context, db DBorTx, startID StartID) error {
 	_, err := db.ExecContext(ctx, "UPDATE flows_flowstart SET status = 'C', modified_on = NOW() WHERE id = $1", startID)
-	return errors.Wrapf(err, "error marking flow start as complete")
+	if err != nil {
+		return fmt.Errorf("error marking flow start as complete: %w", err)
+	}
+	return nil
 }
 
 // MarkStartFailed sets the status for the passed in flow start to F
 func MarkStartFailed(ctx context.Context, db DBorTx, startID StartID) error {
 	_, err := db.ExecContext(ctx, "UPDATE flows_flowstart SET status = 'F', modified_on = NOW() WHERE id = $1", startID)
-	return errors.Wrapf(err, "error setting flow start as failed")
+	if err != nil {
+		return fmt.Errorf("error setting flow start as failed: %w", err)
+	}
+	return nil
 }
 
 // GetFlowStartAttributes gets the basic attributes for the passed in start id, this includes ONLY its id, uuid, flow_id and params
@@ -178,7 +188,7 @@ func GetFlowStartAttributes(ctx context.Context, db DBorTx, startID StartID) (*F
 	start := &FlowStart{}
 	err := db.GetContext(ctx, start, `SELECT id, uuid, flow_id, params, parent_summary, session_history FROM flows_flowstart WHERE id = $1`, startID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "unable to load start attributes for id: %d", startID)
+		return nil, fmt.Errorf("unable to load start attributes for id: %d: %w", startID, err)
 	}
 	return start, nil
 }
@@ -198,7 +208,7 @@ func InsertFlowStarts(ctx context.Context, db DBorTx, starts []*FlowStart) error
 	// insert our starts
 	err := BulkQuery(ctx, "inserting flow start", db, sqlInsertStart, starts)
 	if err != nil {
-		return errors.Wrapf(err, "error inserting flow starts")
+		return fmt.Errorf("error inserting flow starts: %w", err)
 	}
 
 	// build up all our contact associations
@@ -212,7 +222,7 @@ func InsertFlowStarts(ctx context.Context, db DBorTx, starts []*FlowStart) error
 	// insert our contacts
 	err = BulkQuery(ctx, "inserting flow start contacts", db, sqlInsertStartContact, contacts)
 	if err != nil {
-		return errors.Wrapf(err, "error inserting flow start contacts for flow")
+		return fmt.Errorf("error inserting flow start contacts for flow: %w", err)
 	}
 
 	// build up all our group associations
@@ -226,7 +236,7 @@ func InsertFlowStarts(ctx context.Context, db DBorTx, starts []*FlowStart) error
 	// insert our groups
 	err = BulkQuery(ctx, "inserting flow start groups", db, sqlInsertStartGroup, groups)
 	if err != nil {
-		return errors.Wrapf(err, "error inserting flow start groups for flow")
+		return fmt.Errorf("error inserting flow start groups for flow: %w", err)
 	}
 
 	return nil

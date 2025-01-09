@@ -8,11 +8,10 @@ import (
 	"github.com/gomodule/redigo/redis"
 	"github.com/nyaruka/goflow/assets"
 	"github.com/nyaruka/mailroom/core/models"
-	"github.com/nyaruka/mailroom/core/queue"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/runtime"
+	"github.com/nyaruka/mailroom/utils/queues"
 	"github.com/nyaruka/redisx"
-	"github.com/pkg/errors"
 	"golang.org/x/exp/slog"
 )
 
@@ -23,13 +22,17 @@ const (
 var campaignsMarker = redisx.NewIntervalSet("campaign_event", time.Hour*24, 2)
 
 func init() {
-	tasks.RegisterCron("campaign_event", false, &QueueEventsCron{})
+	tasks.RegisterCron("campaign_event", &QueueEventsCron{})
 }
 
 type QueueEventsCron struct{}
 
 func (c *QueueEventsCron) Next(last time.Time) time.Time {
 	return tasks.CronNext(last, time.Minute)
+}
+
+func (c *QueueEventsCron) AllInstances() bool {
+	return false
 }
 
 // QueueEventFires looks for all due campaign event fires and queues them to be started
@@ -40,7 +43,7 @@ func (c *QueueEventsCron) Run(ctx context.Context, rt *runtime.Runtime) (map[str
 
 	rows, err := rt.DB.QueryxContext(ctx, expiredEventsQuery)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error loading expired campaign events")
+		return nil, fmt.Errorf("error loading expired campaign events: %w", err)
 	}
 	defer rows.Close()
 
@@ -55,7 +58,7 @@ func (c *QueueEventsCron) Run(ctx context.Context, rt *runtime.Runtime) (map[str
 		row := &eventFireRow{}
 		err := rows.StructScan(row)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error reading event fire row")
+			return nil, fmt.Errorf("error reading event fire row: %w", err)
 		}
 
 		numFires++
@@ -64,7 +67,7 @@ func (c *QueueEventsCron) Run(ctx context.Context, rt *runtime.Runtime) (map[str
 		taskID := fmt.Sprintf("%d", row.FireID)
 		dupe, err := campaignsMarker.IsMember(rc, taskID)
 		if err != nil {
-			return nil, errors.Wrap(err, "error checking task lock")
+			return nil, fmt.Errorf("error checking task lock: %w", err)
 		}
 
 		// this has already been queued, skip
@@ -83,7 +86,7 @@ func (c *QueueEventsCron) Run(ctx context.Context, rt *runtime.Runtime) (map[str
 		if task != nil {
 			err = c.queueFiresTask(rt.RP, orgID, task)
 			if err != nil {
-				return nil, errors.Wrapf(err, "error queueing task")
+				return nil, fmt.Errorf("error queueing task: %w", err)
 			}
 			numTasks++
 		}
@@ -103,7 +106,7 @@ func (c *QueueEventsCron) Run(ctx context.Context, rt *runtime.Runtime) (map[str
 	// queue our last task if we have one
 	if task != nil {
 		if err := c.queueFiresTask(rt.RP, orgID, task); err != nil {
-			return nil, errors.Wrapf(err, "error queueing task")
+			return nil, fmt.Errorf("error queueing task: %w", err)
 		}
 		numTasks++
 	}
@@ -115,16 +118,16 @@ func (c *QueueEventsCron) queueFiresTask(rp *redis.Pool, orgID models.OrgID, tas
 	rc := rp.Get()
 	defer rc.Close()
 
-	err := tasks.Queue(rc, queue.BatchQueue, orgID, task, queue.DefaultPriority)
+	err := tasks.Queue(rc, tasks.BatchQueue, orgID, task, queues.DefaultPriority)
 	if err != nil {
-		return errors.Wrap(err, "error queuing task")
+		return fmt.Errorf("error queuing task: %w", err)
 	}
 
 	// mark each of these fires as queued
 	for _, id := range task.FireIDs {
 		err = campaignsMarker.Add(rc, fmt.Sprintf("%d", id))
 		if err != nil {
-			return errors.Wrap(err, "error marking fire as queued")
+			return fmt.Errorf("error marking fire as queued: %w", err)
 		}
 	}
 

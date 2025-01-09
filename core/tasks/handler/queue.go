@@ -1,66 +1,81 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/gomodule/redigo/redis"
 	"github.com/nyaruka/gocommon/dates"
 	"github.com/nyaruka/gocommon/jsonx"
 	"github.com/nyaruka/mailroom/core/models"
-	"github.com/nyaruka/mailroom/core/queue"
 	"github.com/nyaruka/mailroom/core/tasks"
-	"github.com/pkg/errors"
+	"github.com/nyaruka/mailroom/runtime"
+	"github.com/nyaruka/mailroom/utils/queues"
 )
 
-// QueueHandleTask queues a single task for the given contact
-func QueueHandleTask(rc redis.Conn, contactID models.ContactID, task *queue.Task) error {
-	return queueHandleTask(rc, contactID, task, false)
+// Task is the interface for all contact tasks - tasks which operate on a single contact in real time
+type Task interface {
+	Type() string
+	UseReadOnly() bool
+	Perform(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, contact *models.Contact) error
 }
 
-// QueueTicketEvent queues a ticket event to be handled
-func QueueTicketEvent(rc redis.Conn, contactID models.ContactID, evt *models.TicketEvent) error {
-	eventJSON := jsonx.MustMarshal(evt)
-	var task *queue.Task
+var registeredTypes = map[string]func() Task{}
 
-	switch evt.EventType() {
-	case models.TicketEventTypeClosed:
-		task = &queue.Task{
-			Type:     TicketClosedEventType,
-			OrgID:    int(evt.OrgID()),
-			Task:     eventJSON,
-			QueuedOn: dates.Now(),
-		}
+func RegisterContactTask(name string, initFunc func() Task) {
+	registeredTypes[name] = initFunc
+}
+
+func readTask(type_ string, data []byte) (Task, error) {
+	fn := registeredTypes[type_]
+	if fn == nil {
+		return nil, fmt.Errorf("unknown task type: %s", type_)
 	}
 
-	return queueHandleTask(rc, contactID, task, false)
+	t := fn()
+	return t, json.Unmarshal(data, t)
 }
 
-// queueHandleTask queues a single task for the passed in contact. `front` specifies whether the task
-// should be inserted in front of all other tasks for that contact
-func queueHandleTask(rc redis.Conn, contactID models.ContactID, task *queue.Task, front bool) error {
-	// marshal our task
+// wrapper for encoding a handler task
+type payload struct {
+	Type       string          `json:"type"`
+	Task       json.RawMessage `json:"task"`
+	QueuedOn   time.Time       `json:"queued_on"`
+	ErrorCount int             `json:"error_count,omitempty"`
+}
+
+// QueueTask queues a handler task for the given contact
+func QueueTask(rc redis.Conn, orgID models.OrgID, contactID models.ContactID, task Task) error {
+	return queueTask(rc, orgID, contactID, task, false, 0)
+}
+
+func queueTask(rc redis.Conn, orgID models.OrgID, contactID models.ContactID, task Task, front bool, errorCount int) error {
 	taskJSON, err := json.Marshal(task)
 	if err != nil {
-		return errors.Wrapf(err, "error marshalling contact task")
+		return fmt.Errorf("error marshalling handler task: %w", err)
 	}
+
+	payload := &payload{Type: task.Type(), Task: taskJSON, QueuedOn: dates.Now(), ErrorCount: errorCount}
+	payloadJSON := jsonx.MustMarshal(payload)
 
 	// first push the event on our contact queue
-	contactQ := fmt.Sprintf("c:%d:%d", task.OrgID, contactID)
+	contactQ := fmt.Sprintf("c:%d:%d", orgID, contactID)
 	if front {
-		_, err = redis.Int64(rc.Do("lpush", contactQ, string(taskJSON)))
+		_, err = redis.Int64(rc.Do("LPUSH", contactQ, string(payloadJSON)))
 
 	} else {
-		_, err = redis.Int64(rc.Do("rpush", contactQ, string(taskJSON)))
+		_, err = redis.Int64(rc.Do("RPUSH", contactQ, string(payloadJSON)))
 	}
 	if err != nil {
-		return errors.Wrapf(err, "error adding contact event")
+		return fmt.Errorf("error queuing handler task: %w", err)
 	}
 
 	// then add a handle task for that contact on our global handler queue to
-	err = tasks.Queue(rc, queue.HandlerQueue, models.OrgID(task.OrgID), &HandleContactEventTask{ContactID: contactID}, queue.DefaultPriority)
+	err = tasks.Queue(rc, tasks.HandlerQueue, orgID, &HandleContactEventTask{ContactID: contactID}, queues.DefaultPriority)
 	if err != nil {
-		return errors.Wrapf(err, "error adding handle event task")
+		return fmt.Errorf("error queuing handle task: %w", err)
 	}
 	return nil
 }

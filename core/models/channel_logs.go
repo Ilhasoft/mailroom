@@ -15,7 +15,6 @@ import (
 	"github.com/nyaruka/gocommon/uuids"
 	"github.com/nyaruka/goflow/assets"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
 )
 
 // ChannelLogID is our type for a channel log id
@@ -195,14 +194,14 @@ func InsertChannelLogs(ctx context.Context, rt *runtime.Runtime, logs []*Channel
 			}
 		}
 		if err := rt.LogStorage.BatchPut(ctx, uploads); err != nil {
-			return errors.Wrapf(err, "error writing attached channel logs to storage")
+			return fmt.Errorf("error writing attached channel logs to storage: %w", err)
 		}
 	}
 
 	if len(unattached) > 0 {
 		err := BulkQuery(ctx, "insert channel log", rt.DB, sqlInsertChannelLog, unattached)
 		if err != nil {
-			return errors.Wrapf(err, "error inserting unattached channel logs")
+			return fmt.Errorf("error inserting unattached channel logs: %w", err)
 		}
 	}
 

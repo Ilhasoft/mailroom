@@ -2,6 +2,7 @@ package ivr
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -9,17 +10,20 @@ import (
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
 )
 
 func init() {
-	tasks.RegisterCron("retry_ivr_calls", false, &RetryCron{})
+	tasks.RegisterCron("retry_ivr_calls", &RetryCron{})
 }
 
 type RetryCron struct{}
 
 func (c *RetryCron) Next(last time.Time) time.Time {
 	return tasks.CronNext(last, time.Minute)
+}
+
+func (c *RetryCron) AllInstances() bool {
+	return false
 }
 
 // RetryCalls looks for calls that need to be retried and retries them
@@ -32,7 +36,7 @@ func (c *RetryCron) Run(ctx context.Context, rt *runtime.Runtime) (map[string]an
 
 	calls, err := models.LoadCallsToRetry(ctx, rt.DB, 200)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error loading calls to retry")
+		return nil, fmt.Errorf("error loading calls to retry: %w", err)
 	}
 
 	throttledChannels := make(map[models.ChannelID]bool)

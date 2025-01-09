@@ -7,11 +7,10 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/lib/pq"
+	"github.com/nyaruka/gocommon/dbutil"
 	"github.com/nyaruka/gocommon/i18n"
 	"github.com/nyaruka/goflow/assets"
 	"github.com/nyaruka/null/v3"
-	"github.com/pkg/errors"
 )
 
 // ChannelID is the type for channel IDs
@@ -69,6 +68,9 @@ func (c *Channel) Name() string { return c.Name_ }
 // Type returns the channel type for this channel
 func (c *Channel) Type() ChannelType { return c.Type_ }
 
+// Type returns the channel type for this channel
+func (c *Channel) IsAndroid() bool { return c.Type_ == ChannelTypeAndroid }
+
 // TPS returns the max number of transactions per second this channel supports
 func (c *Channel) TPS() int { return c.TPS_ }
 
@@ -122,30 +124,52 @@ func (c *Channel) Reference() *assets.ChannelReference {
 	return assets.NewChannelReference(c.UUID(), c.Name())
 }
 
-// GetChannelsByID fetches channels by ID - NOTE these are "lite" channels and only include fields for sending, and
-// that this function will return deleted channels.
-func GetChannelsByID(ctx context.Context, db *sql.DB, ids []ChannelID) ([]*Channel, error) {
-	rows, err := db.QueryContext(ctx, sqlSelectChannelsByID, pq.Array(ids))
-	if err != nil {
-		return nil, errors.Wrapf(err, "error querying channels by id")
-	}
-	defer rows.Close()
+// GetChannelByID fetches a channel by ID even if it's deleted.
+//
+// NOTE that this function returns a "lite" channel with only sending related fields.
+func GetChannelByID(ctx context.Context, db *sql.DB, id ChannelID) (*Channel, error) {
+	row := db.QueryRowContext(ctx, sqlSelectChannelByID, id)
+	ch := &Channel{}
 
-	return ScanJSONRows(rows, func() *Channel { return &Channel{} })
+	if err := dbutil.ScanJSON(row, ch); err != nil {
+		return nil, fmt.Errorf("error fetching channel by id %d: %w", id, err)
+	}
+
+	return ch, nil
 }
 
-const sqlSelectChannelsByID = `
+const sqlSelectChannelByID = `
 SELECT ROW_TO_JSON(r) FROM (
-    SELECT c.id as id, c.uuid as uuid, c.org_id as org_id, c.name as name, c.channel_type as channel_type, COALESCE(c.tps, 10) as tps, c.config as config
+    SELECT c.id, c.uuid, c.org_id, c.channel_type, c.name, c.address, COALESCE(c.tps, 10) AS tps, c.config
       FROM channels_channel c
-     WHERE c.id = ANY($1)
+     WHERE c.id = $1
+) r;`
+
+// GetAndroidChannelsToSync returns the android channels that have not synced between 15 min ago up to 7 days.
+//
+// NOTE that this function returns a "lite" channel with only sending related fields.
+func GetAndroidChannelsToSync(ctx context.Context, db DBorTx) ([]Channel, error) {
+	rows, err := db.QueryContext(ctx, sqlSelectAndroidChannelsToSync)
+	if err != nil {
+		return nil, fmt.Errorf("error querying old seen android channels: %w", err)
+	}
+
+	return ScanJSONRows(rows, func() Channel { return Channel{} })
+}
+
+const sqlSelectAndroidChannelsToSync = `
+SELECT ROW_TO_JSON(r) FROM (
+    SELECT c.id, c.uuid, c.org_id, c.channel_type, c.name, c.address, COALESCE(c.tps, 10) AS tps, c.config
+      FROM channels_channel c
+     WHERE c.channel_type = 'A' AND c.last_seen >= NOW() - INTERVAL '7 days' AND c.last_seen <  NOW() - INTERVAL '15 minutes' AND c.is_active
+  ORDER BY c.last_seen DESC, c.id DESC
 ) r;`
 
 // loadChannels loads all the channels for the passed in org
 func loadChannels(ctx context.Context, db *sql.DB, orgID OrgID) ([]assets.Channel, error) {
 	rows, err := db.QueryContext(ctx, sqlSelectChannelsByOrg, orgID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error querying channels for org: %d", orgID)
+		return nil, fmt.Errorf("error querying channels for org: %d: %w", orgID, err)
 	}
 
 	return ScanJSONRows(rows, func() assets.Channel { return &Channel{} })
@@ -153,16 +177,16 @@ func loadChannels(ctx context.Context, db *sql.DB, orgID OrgID) ([]assets.Channe
 
 const sqlSelectChannelsByOrg = `
 SELECT ROW_TO_JSON(r) FROM (SELECT
-	c.id as id,
-	c.uuid as uuid,
-	c.org_id as org_id,
-	c.name as name,
-	c.channel_type as channel_type,
-	COALESCE(c.tps, 10) as tps,
-	c.country as country,
-	c.address as address,
-	c.schemes as schemes,
-	c.config as config,
+	c.id,
+	c.uuid,
+	c.org_id,
+	c.name,
+	c.channel_type,
+	COALESCE(c.tps, 10) AS tps,
+	c.country,
+	c.address,
+	c.schemes,
+	c.config,
 	(SELECT ARRAY(
 		SELECT CASE r 
 		WHEN 'R' THEN 'receive' 
@@ -172,7 +196,7 @@ SELECT ROW_TO_JSON(r) FROM (SELECT
 		WHEN 'U' THEN 'ussd'
 		END 
 		FROM unnest(regexp_split_to_array(c.role,'')) AS r)
-	) as roles,
+	) AS roles,
 	CASE WHEN channel_type IN ('FBA') THEN '{"optins"}'::text[] ELSE '{}'::text[] END AS features,
 	jsonb_extract_path(c.config, 'matching_prefixes') AS match_prefixes,
 	jsonb_extract_path(c.config, 'allow_international') AS allow_international,
@@ -191,7 +215,7 @@ func OrgIDForChannelUUID(ctx context.Context, db DBorTx, channelUUID assets.Chan
 	var orgID OrgID
 	err := db.GetContext(ctx, &orgID, `SELECT org_id FROM channels_channel WHERE uuid = $1 AND is_active = TRUE`, channelUUID)
 	if err != nil {
-		return NilOrgID, errors.Wrapf(err, "no channel found with uuid: %s", channelUUID)
+		return NilOrgID, fmt.Errorf("no channel found with uuid: %s: %w", channelUUID, err)
 	}
 	return orgID, nil
 }

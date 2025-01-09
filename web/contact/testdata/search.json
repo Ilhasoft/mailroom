@@ -1,0 +1,212 @@
+[
+    {
+        "label": "error if fields not provided",
+        "method": "POST",
+        "path": "/mr/contact/search",
+        "body": {},
+        "status": 400,
+        "response": {
+            "error": "request failed validation: field 'org_id' is required, field 'group_id' is required"
+        }
+    },
+    {
+        "label": "query error if property not resolveable",
+        "method": "POST",
+        "path": "/mr/contact/search",
+        "body": {
+            "org_id": 1,
+            "query": "birthday = tomorrow",
+            "group_id": 1
+        },
+        "status": 422,
+        "response": {
+            "code": "query:unknown_property",
+            "error": "can't resolve 'birthday' to attribute, scheme or field",
+            "extra": {
+                "property": "birthday"
+            }
+        }
+    },
+    {
+        "label": "query error if property not convertable",
+        "method": "POST",
+        "path": "/mr/contact/search",
+        "body": {
+            "org_id": 1,
+            "query": "age > tomorrow",
+            "group_id": 1
+        },
+        "status": 422,
+        "response": {
+            "code": "query:invalid_number",
+            "error": "can't convert 'tomorrow' to a number",
+            "extra": {
+                "value": "tomorrow"
+            }
+        }
+    },
+    {
+        "label": "valid unstructured query",
+        "method": "POST",
+        "path": "/mr/contact/search",
+        "body": {
+            "org_id": 1,
+            "query": "Cathy",
+            "group_id": 1
+        },
+        "status": 200,
+        "response": {
+            "contact_ids": [
+                10000
+            ],
+            "metadata": {
+                "allow_as_group": true,
+                "attributes": [
+                    "name"
+                ],
+                "fields": [],
+                "groups": [],
+                "schemes": []
+            },
+            "query": "name ~ \"Cathy\"",
+            "total": 1
+        }
+    },
+    {
+        "label": "can exclude specific contacts",
+        "method": "POST",
+        "path": "/mr/contact/search",
+        "body": {
+            "org_id": 1,
+            "query": "Cathy OR George",
+            "group_id": 1,
+            "exclude_ids": [
+                10001,
+                10002
+            ]
+        },
+        "status": 200,
+        "response": {
+            "contact_ids": [
+                10000
+            ],
+            "metadata": {
+                "allow_as_group": true,
+                "attributes": [
+                    "name"
+                ],
+                "fields": [],
+                "groups": [],
+                "schemes": []
+            },
+            "query": "name ~ \"Cathy\" OR name ~ \"George\"",
+            "total": 1
+        }
+    },
+    {
+        "label": "valid search on two fields",
+        "method": "POST",
+        "path": "/mr/contact/search",
+        "body": {
+            "org_id": 1,
+            "query": "AGE = 10 and gender = M",
+            "group_id": 1
+        },
+        "status": 200,
+        "response": {
+            "contact_ids": [],
+            "metadata": {
+                "allow_as_group": true,
+                "attributes": [],
+                "fields": [
+                    {
+                        "key": "age",
+                        "name": "Age"
+                    },
+                    {
+                        "key": "gender",
+                        "name": "Gender"
+                    }
+                ],
+                "groups": [],
+                "schemes": []
+            },
+            "query": "fields.age = 10 AND fields.gender = \"M\"",
+            "total": 0
+        }
+    },
+    {
+        "label": "empty query on different group",
+        "method": "POST",
+        "path": "/mr/contact/search",
+        "body": {
+            "org_id": 1,
+            "query": "",
+            "group_id": 10001
+        },
+        "status": 200,
+        "response": {
+            "contact_ids": [
+                10013,
+                10012,
+                10011,
+                10010,
+                10009,
+                10008,
+                10007,
+                10006,
+                10005,
+                10004
+            ],
+            "query": "",
+            "total": 10
+        }
+    },
+    {
+        "label": "empty query on different group with limit",
+        "method": "POST",
+        "path": "/mr/contact/search",
+        "body": {
+            "org_id": 1,
+            "query": "",
+            "group_id": 10001,
+            "limit": 5
+        },
+        "status": 200,
+        "response": {
+            "contact_ids": [
+                10013,
+                10012,
+                10011,
+                10010,
+                10009
+            ],
+            "query": "",
+            "total": 10
+        }
+    },
+    {
+        "label": "empty query on different group with limit and sort",
+        "method": "POST",
+        "path": "/mr/contact/search",
+        "body": {
+            "org_id": 1,
+            "query": "",
+            "group_id": 10001,
+            "limit": 5,
+            "sort": "id"
+        },
+        "status": 200,
+        "response": {
+            "contact_ids": [
+                10004,
+                10005,
+                10006,
+                10007,
+                10008
+            ],
+            "query": "",
+            "total": 10
+        }
+    }
+]

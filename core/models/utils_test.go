@@ -26,7 +26,7 @@ func TestBulkQueryBatches(t *testing.T) {
 	sql := `INSERT INTO foo (name, age) VALUES(:name, :age) RETURNING id`
 
 	// noop with zero structs
-	err := models.BulkQueryBatches(ctx, "foo inserts", rt.DB, sql, 10, nil)
+	err := models.BulkQueryBatches(ctx, "foo inserts", rt.DB, sql, 10, []any{})
 	assert.NoError(t, err)
 
 	// test when structs fit into one batch

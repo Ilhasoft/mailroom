@@ -2,12 +2,12 @@ package search
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/nyaruka/gocommon/urns"
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
 )
 
 type Recipients struct {
@@ -39,7 +39,7 @@ func ResolveRecipients(ctx context.Context, rt *runtime.Runtime, oa *models.OrgA
 	if len(recipients.URNs) > 0 {
 		fetchedByURN, createdByURN, err := models.GetOrCreateContactsFromURNs(ctx, rt.DB, oa, recipients.URNs)
 		if err != nil {
-			return nil, errors.Wrap(err, "error getting contact ids from urns")
+			return nil, fmt.Errorf("error getting contact ids from urns: %w", err)
 		}
 		for _, c := range fetchedByURN {
 			if !idsSeen[c.ID()] {
@@ -90,12 +90,12 @@ func ResolveRecipients(ctx context.Context, rt *runtime.Runtime, oa *models.OrgA
 
 		query, err := BuildRecipientsQuery(oa, flow, includeGroups, includeContactUUIDs, recipients.Query, recipients.Exclusions, excludeGroups)
 		if err != nil {
-			return nil, errors.Wrap(err, "error building query")
+			return nil, fmt.Errorf("error building query: %w", err)
 		}
 
-		matches, err = GetContactIDsForQuery(ctx, rt, oa, query, limit)
+		matches, err = GetContactIDsForQuery(ctx, rt, oa, nil, models.ContactStatusActive, query, limit)
 		if err != nil {
-			return nil, errors.Wrap(err, "error performing contact search")
+			return nil, fmt.Errorf("error performing contact search: %w", err)
 		}
 	}
 

@@ -73,7 +73,7 @@ func TestContactImports(t *testing.T) {
 		batch, err := models.LoadContactImportBatch(ctx, rt.DB, batchID)
 		require.NoError(t, err)
 
-		err = batch.Import(ctx, rt, testdata.Org1.ID, testdata.Admin.ID)
+		err = batch.Import(ctx, rt, oa, testdata.Admin.ID)
 		require.NoError(t, err)
 
 		results := &struct {
@@ -151,6 +151,8 @@ func TestLoadContactImport(t *testing.T) {
 
 	defer testsuite.Reset(testsuite.ResetData)
 
+	oa := testdata.Org1.Load(rt)
+
 	importID := testdata.InsertContactImport(rt, testdata.Org1, testdata.Admin)
 	batch1ID := testdata.InsertContactImportBatch(rt, importID, []byte(`[
 		{"name": "Norbert", "language": "eng", "urns": ["tel:+16055740001"]},
@@ -178,7 +180,7 @@ func TestLoadContactImport(t *testing.T) {
 	assert.Equal(t, 0, batch1.RecordStart)
 	assert.Equal(t, 2, batch1.RecordEnd)
 
-	err = batch1.Import(ctx, rt, testdata.Org1.ID, testdata.Admin.ID)
+	err = batch1.Import(ctx, rt, oa, testdata.Admin.ID)
 	require.NoError(t, err)
 
 	imp, err = models.LoadContactImport(ctx, rt.DB, importID)

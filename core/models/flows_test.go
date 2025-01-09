@@ -20,11 +20,9 @@ func TestLoadFlows(t *testing.T) {
 	defer testsuite.Reset(testsuite.ResetAll)
 
 	rt.DB.MustExec(`UPDATE flows_flow SET metadata = '{"ivr_retry": 30}'::json WHERE id = $1`, testdata.IVRFlow.ID)
-	rt.DB.MustExec(`UPDATE flows_flow SET metadata = '{"ivr_retry": -1}'::json WHERE id = $1`, testdata.SurveyorFlow.ID)
 	rt.DB.MustExec(`UPDATE flows_flow SET expires_after_minutes = 720 WHERE id = $1`, testdata.Favorites.ID)
 	rt.DB.MustExec(`UPDATE flows_flow SET expires_after_minutes = 1 WHERE id = $1`, testdata.PickANumber.ID)          // too small for messaging
 	rt.DB.MustExec(`UPDATE flows_flow SET expires_after_minutes = 12345678 WHERE id = $1`, testdata.SingleMessage.ID) // too large for messaging
-	rt.DB.MustExec(`UPDATE flows_flow SET expires_after_minutes = 123 WHERE id = $1`, testdata.SurveyorFlow.ID)       // surveyor flows shouldn't have expires
 
 	sixtyMinutes := 60 * time.Minute
 	thirtyMinutes := 30 * time.Minute
@@ -80,16 +78,6 @@ func TestLoadFlows(t *testing.T) {
 			flows.FlowTypeVoice,
 			5,
 			&thirtyMinutes, // uses explicit
-		},
-		{
-			testdata.Org1,
-			testdata.SurveyorFlow.ID,
-			testdata.SurveyorFlow.UUID,
-			"Contact Surveyor",
-			models.FlowTypeSurveyor,
-			flows.FlowTypeMessagingOffline,
-			0,   // explicit ignored
-			nil, // no retry
 		},
 	}
 

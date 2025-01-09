@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/nyaruka/gocommon/urns"
-	"github.com/nyaruka/gocommon/uuids"
 	"github.com/nyaruka/goflow/assets"
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/goflow/flows/actions"
@@ -18,6 +17,8 @@ import (
 
 func TestMsgCreated(t *testing.T) {
 	ctx, rt := testsuite.Runtime()
+	rc := rt.RP.Get()
+	defer rc.Close()
 
 	defer testsuite.Reset(testsuite.ResetAll)
 
@@ -37,11 +38,8 @@ func TestMsgCreated(t *testing.T) {
 	msg1 := testdata.InsertIncomingMsg(rt, testdata.Org1, testdata.TwilioChannel, testdata.Cathy, "start", models.MsgStatusHandled)
 
 	templateAction := actions.NewSendMsg(handlers.NewActionUUID(), "Template time", nil, nil, false)
-	templateAction.Templating = &actions.Templating{
-		UUID:      uuids.UUID("db297d56-ec8c-4231-bbe8-030369777ae1"),
-		Template:  &assets.TemplateReference{UUID: assets.TemplateUUID("9c22b594-fcab-4b29-9bcb-ce4404894a80"), Name: "revive_issue"},
-		Variables: []string{"@contact.name", "tooth"},
-	}
+	templateAction.Template = assets.NewTemplateReference("9c22b594-fcab-4b29-9bcb-ce4404894a80", "revive_issue")
+	templateAction.TemplateVariables = []string{"@contact.name", "tooth"}
 
 	tcs := []handlers.TestCase{
 		{
@@ -79,7 +77,7 @@ func TestMsgCreated(t *testing.T) {
 					Count: 1,
 				},
 				{
-					SQL: "SELECT COUNT(*) FROM msgs_msg WHERE contact_id = $1 AND text = $2 AND direction = 'O' AND status = 'Q' AND channel_id = $3 AND metadata::jsonb->'templating'->'template'->>'name' = 'revive_issue'",
+					SQL: "SELECT COUNT(*) FROM msgs_msg WHERE contact_id = $1 AND text = $2 AND direction = 'O' AND status = 'Q' AND channel_id = $3 AND templating->'template'->>'name' = 'revive_issue'",
 					Args: []any{
 						testdata.Alexandria.ID,
 						`Hi Alexandia, are you still experiencing problems with tooth?`,
@@ -94,10 +92,10 @@ func TestMsgCreated(t *testing.T) {
 	handlers.RunTestCases(t, ctx, rt, tcs)
 
 	// Cathy should have 1 batch of queued messages at high priority
-	assertredis.ZCard(t, rt.RP, fmt.Sprintf("msgs:%s|10/1", testdata.TwilioChannel.UUID), 1)
+	assertredis.ZCard(t, rc, fmt.Sprintf("msgs:%s|10/1", testdata.TwilioChannel.UUID), 1)
 
 	// One bulk for George
-	assertredis.ZCard(t, rt.RP, fmt.Sprintf("msgs:%s|10/0", testdata.TwilioChannel.UUID), 1)
+	assertredis.ZCard(t, rc, fmt.Sprintf("msgs:%s|10/0", testdata.TwilioChannel.UUID), 1)
 }
 
 func TestNewURN(t *testing.T) {

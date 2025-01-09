@@ -5,13 +5,14 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"github.com/nyaruka/gocommon/dbutil"
-	"github.com/pkg/errors"
 )
 
 // Queryer lets us pass anything that supports QueryContext to a function (sql.DB, sql.Tx, sqlx.DB, sqlx.Tx)
@@ -48,7 +49,7 @@ func BulkQuery[T any](ctx context.Context, label string, tx DBorTx, sql string, 
 
 	err := dbutil.BulkQuery(ctx, tx, sql, structs)
 	if err != nil {
-		return errors.Wrap(err, "error making bulk query")
+		return fmt.Errorf("error making bulk query: %w", err)
 	}
 
 	slog.Info(fmt.Sprintf("%s bulk sql complete", label), "elapsed", time.Since(start), "rows", len(structs))
@@ -57,14 +58,14 @@ func BulkQuery[T any](ctx context.Context, label string, tx DBorTx, sql string, 
 }
 
 // BulkQueryBatches runs the given query as a bulk operation, in batches of the given size
-func BulkQueryBatches(ctx context.Context, label string, tx DBorTx, sql string, batchSize int, structs []any) error {
+func BulkQueryBatches[T any](ctx context.Context, label string, tx DBorTx, sql string, batchSize int, structs []T) error {
 	start := time.Now()
 
 	batches := ChunkSlice(structs, batchSize)
 	for i, batch := range batches {
 		err := dbutil.BulkQuery(ctx, tx, sql, batch)
 		if err != nil {
-			return errors.Wrap(err, "error making bulk batch query")
+			return fmt.Errorf("error making bulk batch query: %w", err)
 		}
 
 		slog.Info(fmt.Sprintf("%s bulk sql batch complete", label), "elapsed", time.Since(start), "rows", len(batch), "batch", i+1)
@@ -94,7 +95,7 @@ func ScanJSONRows[T any](rows *sql.Rows, f func() T) ([]T, error) {
 		a := f()
 		err := dbutil.ScanJSON(rows, &a)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error scanning into %T", a)
+			return nil, fmt.Errorf("error scanning into %T: %w", a, err)
 		}
 		as = append(as, a)
 	}
@@ -102,26 +103,27 @@ func ScanJSONRows[T any](rows *sql.Rows, f func() T) ([]T, error) {
 	return as, nil
 }
 
-// Map is a generic map which is written to the database as JSON. For nullable fields use null.Map.
-type JSONMap map[string]any
-
-// Scan implements the Scanner interface
-func (m *JSONMap) Scan(value any) error {
-	var raw []byte
-	switch typed := value.(type) {
-	case string:
-		raw = []byte(typed)
-	case []byte:
-		raw = typed
-	default:
-		return fmt.Errorf("unable to scan %T as map", value)
-	}
-
-	if err := json.Unmarshal(raw, m); err != nil {
-		return err
-	}
-	return nil
+// JSONB is a generic wrapper for a type which should be written to and read from the database as JSON.
+type JSONB[T any] struct {
+	V T
 }
 
-// Value implements the Valuer interface
-func (m JSONMap) Value() (driver.Value, error) { return json.Marshal(m) }
+func (t *JSONB[T]) Scan(value any) error {
+	b, ok := value.([]byte)
+	if !ok {
+		return errors.New("failed type assertion to []byte")
+	}
+	return json.Unmarshal(b, &t.V)
+}
+
+func (t JSONB[T]) Value() (driver.Value, error) {
+	return json.Marshal(t.V)
+}
+
+func StringArray[T ~string](vals []T) pq.StringArray {
+	a := make(pq.StringArray, len(vals))
+	for i := range vals {
+		a[i] = string(vals[i])
+	}
+	return a
+}

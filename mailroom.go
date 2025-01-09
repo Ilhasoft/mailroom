@@ -3,51 +3,22 @@ package mailroom
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
-	"net/url"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/appleboy/go-fcm"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/gomodule/redigo/redis"
+	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/jmoiron/sqlx"
 	"github.com/nyaruka/gocommon/analytics"
 	"github.com/nyaruka/gocommon/storage"
-	"github.com/nyaruka/mailroom/core/queue"
+	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/nyaruka/mailroom/utils/cron"
 	"github.com/nyaruka/mailroom/web"
-	"github.com/olivere/elastic/v7"
-	"github.com/pkg/errors"
+	"github.com/nyaruka/redisx"
 )
-
-// InitFunction is a function that will be called when mailroom starts
-type InitFunction func(*runtime.Runtime, *sync.WaitGroup, chan bool) error
-
-var initFunctions = make([]InitFunction, 0)
-
-func addInitFunction(initFunc InitFunction) {
-	initFunctions = append(initFunctions, initFunc)
-}
-
-// RegisterCron registers a new cron function to run every interval
-func RegisterCron(name string, allInstances bool, fn cron.Function, next func(time.Time) time.Time) {
-	addInitFunction(func(rt *runtime.Runtime, wg *sync.WaitGroup, quit chan bool) error {
-		cron.Start(rt, wg, name, allInstances, fn, next, time.Minute*5, quit)
-		return nil
-	})
-}
-
-// TaskFunction is the function that will be called for a type of task
-type TaskFunction func(ctx context.Context, rt *runtime.Runtime, task *queue.Task) error
-
-var taskFunctions = make(map[string]TaskFunction)
-
-// AddTaskFunction adds an task function that will be called for a type of task
-func AddTaskFunction(taskType string, taskFunc TaskFunction) {
-	taskFunctions[taskType] = taskFunc
-}
 
 // Mailroom is a service for handling RapidPro events
 type Mailroom struct {
@@ -72,8 +43,8 @@ func NewMailroom(config *runtime.Config) *Mailroom {
 		wg:   &sync.WaitGroup{},
 	}
 	mr.ctx, mr.cancel = context.WithCancel(context.Background())
-	mr.batchForeman = NewForeman(mr.rt, mr.wg, queue.BatchQueue, config.BatchWorkers)
-	mr.handlerForeman = NewForeman(mr.rt, mr.wg, queue.HandlerQueue, config.HandlerWorkers)
+	mr.batchForeman = NewForeman(mr.rt, mr.wg, tasks.BatchQueue, config.BatchWorkers)
+	mr.handlerForeman = NewForeman(mr.rt, mr.wg, tasks.HandlerQueue, config.HandlerWorkers)
 
 	return mr
 }
@@ -105,11 +76,20 @@ func (mr *Mailroom) Start() error {
 		log.Warn("no distinct readonly db configured")
 	}
 
-	mr.rt.RP, err = openAndCheckRedisPool(c.Redis)
+	mr.rt.RP, err = redisx.NewPool(c.Redis)
 	if err != nil {
 		log.Error("redis not reachable", "error", err)
 	} else {
 		log.Info("redis ok")
+	}
+
+	if c.AndroidCredentialsFile != "" {
+		mr.rt.FCM, err = fcm.NewClient(mr.ctx, fcm.WithCredentialsFile(c.AndroidCredentialsFile))
+		if err != nil {
+			log.Error("unable to create FCM client", "error", err)
+		}
+	} else {
+		log.Warn("fcm not configured, no android syncing")
 	}
 
 	// create our storage (S3 or file system)
@@ -156,25 +136,16 @@ func (mr *Mailroom) Start() error {
 	}
 
 	// initialize our elastic client
-	mr.rt.ES, err = newElasticClient(c.Elastic, c.ElasticUsername, c.ElasticPassword)
+	mr.rt.ES, err = elasticsearch.NewTypedClient(elasticsearch.Config{Addresses: []string{c.Elastic}, Username: c.ElasticUsername, Password: c.ElasticPassword})
 	if err != nil {
 		log.Error("elastic search not available", "error", err)
 	} else {
 		log.Info("elastic ok")
 	}
 
-	// warn if we won't be doing FCM syncing
-	if c.FCMKey == "" {
-		log.Warn("fcm not configured, no android syncing")
-	}
-
-	for _, initFunc := range initFunctions {
-		initFunc(mr.rt, mr.wg, mr.quit)
-	}
-
 	// if we have a librato token, configure it
 	if c.LibratoToken != "" {
-		analytics.RegisterBackend(analytics.NewLibrato(c.LibratoUsername, c.LibratoToken, c.InstanceName, time.Second, mr.wg))
+		analytics.RegisterBackend(analytics.NewLibrato(c.LibratoUsername, c.LibratoToken, c.InstanceID, time.Second, mr.wg))
 	}
 
 	analytics.Start()
@@ -186,6 +157,8 @@ func (mr *Mailroom) Start() error {
 	// start our web server
 	mr.webserver = web.NewServer(mr.ctx, mr.rt, mr.wg)
 	mr.webserver.Start()
+
+	tasks.StartCrons(mr.rt, mr.wg, mr.quit)
 
 	log.Info("mailroom started", "domain", c.Domain)
 
@@ -208,11 +181,6 @@ func (mr *Mailroom) Stop() error {
 
 	mr.wg.Wait()
 
-	// stop ES client if we have one
-	if mr.rt.ES != nil {
-		mr.rt.ES.Stop()
-	}
-
 	log.Info("mailroom stopped")
 	return nil
 }
@@ -220,7 +188,7 @@ func (mr *Mailroom) Stop() error {
 func openAndCheckDBConnection(url string, maxOpenConns int) (*sql.DB, *sqlx.DB, error) {
 	db, err := sqlx.Open("postgres", url)
 	if err != nil {
-		return nil, nil, errors.Wrapf(err, "unable to open database connection: '%s'", url)
+		return nil, nil, fmt.Errorf("unable to open database connection: '%s': %w", url, err)
 	}
 
 	// configure our pool
@@ -234,59 +202,6 @@ func openAndCheckDBConnection(url string, maxOpenConns int) (*sql.DB, *sqlx.DB, 
 	cancel()
 
 	return db.DB, db, err
-}
-
-func openAndCheckRedisPool(redisUrl string) (*redis.Pool, error) {
-	redisURL, _ := url.Parse(redisUrl)
-
-	rp := &redis.Pool{
-		Wait:        true,              // makes callers wait for a connection
-		MaxActive:   36,                // only open this many concurrent connections at once
-		MaxIdle:     4,                 // only keep up to this many idle
-		IdleTimeout: 240 * time.Second, // how long to wait before reaping a connection
-		Dial: func() (redis.Conn, error) {
-			conn, err := redis.Dial("tcp", redisURL.Host)
-			if err != nil {
-				return nil, err
-			}
-
-			// send auth if required
-			if redisURL.User != nil {
-				pass, authRequired := redisURL.User.Password()
-				if authRequired {
-					if _, err := conn.Do("AUTH", pass); err != nil {
-						conn.Close()
-						return nil, err
-					}
-				}
-			}
-
-			// switch to the right DB
-			_, err = conn.Do("SELECT", strings.TrimLeft(redisURL.Path, "/"))
-			return conn, err
-		},
-	}
-
-	// test the connection
-	conn := rp.Get()
-	defer conn.Close()
-	_, err := conn.Do("PING")
-
-	return rp, err
-}
-
-func newElasticClient(url string, username string, password string) (*elastic.Client, error) {
-	// enable retrying
-	backoff := elastic.NewSimpleBackoff(500, 1000, 2000)
-	backoff.Jitter(true)
-	retrier := elastic.NewBackoffRetrier(backoff)
-
-	return elastic.NewClient(
-		elastic.SetURL(url),
-		elastic.SetSniff(false),
-		elastic.SetRetrier(retrier),
-		elastic.SetBasicAuth(username, password),
-	)
 }
 
 func checkStorage(s storage.Storage) error {

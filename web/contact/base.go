@@ -1,26 +1,27 @@
 package contact
 
 import (
+	"fmt"
+
 	"github.com/nyaruka/gocommon/i18n"
 	"github.com/nyaruka/gocommon/urns"
 	"github.com/nyaruka/goflow/envs"
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/goflow/flows/modifiers"
 	"github.com/nyaruka/mailroom/core/models"
-	"github.com/pkg/errors"
 )
 
 // Creation a validated contact creation task
 type Creation struct {
 	Name     string
 	Language i18n.Language
+	Status   models.ContactStatus
 	URNs     []urns.URN
 	Mods     []flows.Modifier
 }
 
 // SpecToCreation validates that the spec is valid for the given assets
 func SpecToCreation(s *models.ContactSpec, env envs.Environment, sa flows.SessionAssets) (*Creation, error) {
-	country := string(env.DefaultCountry())
 	var err error
 	validated := &Creation{}
 
@@ -31,13 +32,19 @@ func SpecToCreation(s *models.ContactSpec, env envs.Environment, sa flows.Sessio
 	if s.Language != nil && *s.Language != "" {
 		validated.Language, err = i18n.ParseLanguage(*s.Language)
 		if err != nil {
-			return nil, errors.Wrap(err, "invalid language")
+			return nil, fmt.Errorf("invalid language: %w", err)
 		}
+	}
+
+	if s.Status != "" {
+		validated.Status = models.ContactToModelStatus[s.Status]
+	} else {
+		validated.Status = models.ContactStatusActive
 	}
 
 	validated.URNs = make([]urns.URN, len(s.URNs))
 	for i, urn := range s.URNs {
-		validated.URNs[i] = urn.Normalize(country)
+		validated.URNs[i] = urn.Normalize()
 	}
 
 	validated.Mods = make([]flows.Modifier, 0, len(s.Fields))
@@ -45,7 +52,7 @@ func SpecToCreation(s *models.ContactSpec, env envs.Environment, sa flows.Sessio
 	for key, value := range s.Fields {
 		field := sa.Fields().Get(key)
 		if field == nil {
-			return nil, errors.Errorf("unknown contact field '%s'", key)
+			return nil, fmt.Errorf("unknown contact field '%s'", key)
 		}
 		if value != "" {
 			validated.Mods = append(validated.Mods, modifiers.NewField(field, value))
@@ -57,10 +64,10 @@ func SpecToCreation(s *models.ContactSpec, env envs.Environment, sa flows.Sessio
 		for i, uuid := range s.Groups {
 			group := sa.Groups().Get(uuid)
 			if group == nil {
-				return nil, errors.Errorf("unknown contact group '%s'", uuid)
+				return nil, fmt.Errorf("unknown contact group '%s'", uuid)
 			}
 			if group.UsesQuery() {
-				return nil, errors.Errorf("can't add contact to query based group '%s'", uuid)
+				return nil, fmt.Errorf("can't add contact to query based group '%s'", uuid)
 			}
 			groups[i] = group
 		}

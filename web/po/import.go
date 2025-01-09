@@ -2,6 +2,7 @@ package po
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/nyaruka/gocommon/i18n"
@@ -10,7 +11,6 @@ import (
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/mailroom/web"
-	"github.com/pkg/errors"
 )
 
 func init() {
@@ -38,12 +38,12 @@ func handleImport(ctx context.Context, rt *runtime.Runtime, r *http.Request) (an
 
 	poFile, _, err := r.FormFile("po")
 	if err != nil {
-		return errors.Wrapf(err, "missing po file on request"), http.StatusBadRequest, nil
+		return fmt.Errorf("missing po file on request: %w", err), http.StatusBadRequest, nil
 	}
 
 	p, err := po.ReadPO(poFile)
 	if err != nil {
-		return errors.Wrapf(err, "invalid po file"), http.StatusBadRequest, nil
+		return fmt.Errorf("invalid po file: %w", err), http.StatusBadRequest, nil
 	}
 
 	flows, err := loadFlows(ctx, rt, form.OrgID, form.FlowIDs)

@@ -7,6 +7,7 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -26,7 +27,6 @@ import (
 	"github.com/nyaruka/mailroom/core/ivr"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
 )
 
 // IgnoreSignatures controls whether we ignore signatures (public for testing overriding)
@@ -149,7 +149,7 @@ func NewServiceFromChannel(httpClient *http.Client, channel *models.Channel) (iv
 	accountSID := channel.ConfigValue(accountSIDConfig, "")
 	authToken := channel.ConfigValue(authTokenConfig, "")
 	if accountSID == "" || authToken == "" {
-		return nil, errors.Errorf("missing auth_token or account_sid on channel config: %v for channel: %s", channel.Config(), channel.UUID())
+		return nil, fmt.Errorf("missing auth_token or account_sid on channel config: %v for channel: %s", channel.Config(), channel.UUID())
 	}
 	baseURL := channel.ConfigValue(baseURLConfig, channel.ConfigValue(sendURLConfig, BaseURL))
 
@@ -200,7 +200,7 @@ func (s *service) CallIDForRequest(r *http.Request) (string, error) {
 	r.ParseForm()
 	callID := r.Form.Get("CallSid")
 	if callID == "" {
-		return "", errors.Errorf("no CallSid parameter found in URL: %s", r.URL)
+		return "", fmt.Errorf("no CallSid parameter found in URL: %s", r.URL)
 	}
 	return callID, nil
 }
@@ -214,7 +214,7 @@ func (s *service) URNForRequest(r *http.Request) (urns.URN, error) {
 	if tel == "" {
 		return "", errors.New("no Caller or From parameter found in request")
 	}
-	return urns.NewTelURNForCountry(tel, "")
+	return urns.ParsePhone(tel, "", true, false)
 }
 
 // CallResponse is our struct for a Twilio call response
@@ -239,20 +239,20 @@ func (s *service) RequestCall(number urns.URN, callbackURL string, statusURL str
 
 	trace, err := s.postRequest(sendURL, form)
 	if err != nil {
-		return ivr.NilCallID, trace, errors.Wrapf(err, "error trying to start call")
+		return ivr.NilCallID, trace, fmt.Errorf("error trying to start call: %w", err)
 	}
 
 	if trace.Response.StatusCode != 201 {
-		return ivr.NilCallID, trace, errors.Errorf("received non 201 status for call start: %d", trace.Response.StatusCode)
+		return ivr.NilCallID, trace, fmt.Errorf("received non 201 status for call start: %d", trace.Response.StatusCode)
 	}
 
 	// parse the response from Twilio
 	call := &CallResponse{}
 	if err := utils.UnmarshalAndValidate(trace.ResponseBody, call); err != nil {
-		return ivr.NilCallID, trace, errors.Wrap(err, "unable parse Twilio response")
+		return ivr.NilCallID, trace, fmt.Errorf("unable parse Twilio response: %w", err)
 	}
 	if call.Status == statusFailed {
-		return ivr.NilCallID, trace, errors.Errorf("call status returned as failed")
+		return ivr.NilCallID, trace, fmt.Errorf("call status returned as failed")
 	}
 
 	return ivr.CallID(call.SID), trace, nil
@@ -268,11 +268,11 @@ func (s *service) HangupCall(callID string) (*httpx.Trace, error) {
 
 	trace, err := s.postRequest(sendURL, form)
 	if err != nil {
-		return trace, errors.Wrapf(err, "error trying to hangup call")
+		return trace, fmt.Errorf("error trying to hangup call: %w", err)
 	}
 
 	if trace.Response.StatusCode != 200 {
-		return trace, errors.Errorf("received non 204 trying to hang up call: %d", trace.Response.StatusCode)
+		return trace, fmt.Errorf("received non 204 trying to hang up call: %d", trace.Response.StatusCode)
 	}
 
 	return trace, nil
@@ -309,7 +309,7 @@ func (s *service) ResumeForRequest(r *http.Request) (ivr.Resume, error) {
 		twStatus := r.Form.Get("DialCallStatus")
 		status := dialStatusMap[twStatus]
 		if status == "" {
-			return nil, errors.Errorf("unknown Twilio DialCallStatus in callback: %s", twStatus)
+			return nil, fmt.Errorf("unknown Twilio DialCallStatus in callback: %s", twStatus)
 		}
 		durationStr := r.Form.Get("DialCallDuration")
 		var duration int64
@@ -317,14 +317,14 @@ func (s *service) ResumeForRequest(r *http.Request) (ivr.Resume, error) {
 			var err error
 			duration, err = strconv.ParseInt(durationStr, 10, 64)
 			if err != nil {
-				return nil, errors.Errorf("invalid value for DialCallDuration: %s", durationStr)
+				return nil, fmt.Errorf("invalid value for DialCallDuration: %s", durationStr)
 			}
 		}
 
 		return ivr.DialResume{Status: status, Duration: int(duration)}, nil
 
 	default:
-		return nil, errors.Errorf("unknown wait_type: %s", waitType)
+		return nil, fmt.Errorf("unknown wait_type: %s", waitType)
 	}
 }
 
@@ -364,7 +364,7 @@ func (s *service) ValidateRequestSignature(r *http.Request) error {
 
 	actual := r.Header.Get(signatureHeader)
 	if actual == "" {
-		return errors.Errorf("missing request signature header")
+		return fmt.Errorf("missing request signature header")
 	}
 
 	r.ParseForm()
@@ -378,12 +378,12 @@ func (s *service) ValidateRequestSignature(r *http.Request) error {
 	url := fmt.Sprintf("https://%s%s", r.Host, path)
 	expected, err := twCalculateSignature(url, r.PostForm, s.authToken)
 	if err != nil {
-		return errors.Wrapf(err, "error calculating signature")
+		return fmt.Errorf("error calculating signature: %w", err)
 	}
 
 	// compare signatures in way that isn't sensitive to a timing attack
 	if !hmac.Equal(expected, []byte(actual)) {
-		return errors.Errorf("invalid request signature: %s", actual)
+		return fmt.Errorf("invalid request signature: %s", actual)
 	}
 
 	return nil
@@ -393,24 +393,24 @@ func (s *service) ValidateRequestSignature(r *http.Request) error {
 func (s *service) WriteSessionResponse(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, channel *models.Channel, call *models.Call, session *models.Session, number urns.URN, resumeURL string, r *http.Request, w http.ResponseWriter) error {
 	// for errored sessions we should just output our error body
 	if session.Status() == models.SessionStatusFailed {
-		return errors.Errorf("cannot write IVR response for failed session")
+		return fmt.Errorf("cannot write IVR response for failed session")
 	}
 
 	// otherwise look for any say events
 	sprint := session.Sprint()
 	if sprint == nil {
-		return errors.Errorf("cannot write IVR response for session with no sprint")
+		return fmt.Errorf("cannot write IVR response for session with no sprint")
 	}
 
 	// get our response
 	response, err := ResponseForSprint(rt, oa.Env(), number, resumeURL, sprint.Events(), true)
 	if err != nil {
-		return errors.Wrap(err, "unable to build response for IVR call")
+		return fmt.Errorf("unable to build response for IVR call: %w", err)
 	}
 
 	_, err = w.Write([]byte(response))
 	if err != nil {
-		return errors.Wrap(err, "error writing IVR response")
+		return fmt.Errorf("error writing IVR response: %w", err)
 	}
 
 	return nil
@@ -539,7 +539,7 @@ func ResponseForSprint(rt *runtime.Runtime, env envs.Environment, urn urns.URN, 
 				r.Commands = commands
 
 			default:
-				return "", errors.Errorf("unable to use hint in IVR call, unknown type: %s", event.Hint.Type())
+				return "", fmt.Errorf("unable to use hint in IVR call, unknown type: %s", event.Hint.Type())
 			}
 
 		case *events.DialWaitEvent:
@@ -564,7 +564,7 @@ func ResponseForSprint(rt *runtime.Runtime, env envs.Environment, urn urns.URN, 
 		body, err = xml.Marshal(r)
 	}
 	if err != nil {
-		return "", errors.Wrap(err, "unable to marshal twiml body")
+		return "", fmt.Errorf("unable to marshal twiml body: %w", err)
 	}
 
 	return xml.Header + string(body), nil

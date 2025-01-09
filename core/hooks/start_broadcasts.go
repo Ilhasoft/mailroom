@@ -2,15 +2,15 @@ package hooks
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/nyaruka/goflow/flows/events"
 	"github.com/nyaruka/mailroom/core/models"
-	"github.com/nyaruka/mailroom/core/queue"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/core/tasks/msgs"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
+	"github.com/nyaruka/mailroom/utils/queues"
 )
 
 // StartBroadcastsHook is our hook for starting broadcasts
@@ -30,21 +30,21 @@ func (h *startBroadcastsHook) Apply(ctx context.Context, rt *runtime.Runtime, tx
 
 			bcast, err := models.NewBroadcastFromEvent(ctx, tx, oa, event)
 			if err != nil {
-				return errors.Wrapf(err, "error creating broadcast")
+				return fmt.Errorf("error creating broadcast: %w", err)
 			}
 
-			taskQ := queue.HandlerQueue
-			priority := queue.DefaultPriority
+			taskQ := tasks.HandlerQueue
+			priority := queues.DefaultPriority
 
 			// if we are starting groups, queue to our batch queue instead, but with high priority
 			if len(bcast.GroupIDs) > 0 {
-				taskQ = queue.BatchQueue
-				priority = queue.HighPriority
+				taskQ = tasks.BatchQueue
+				priority = queues.HighPriority
 			}
 
 			err = tasks.Queue(rc, taskQ, oa.OrgID(), &msgs.SendBroadcastTask{Broadcast: bcast}, priority)
 			if err != nil {
-				return errors.Wrapf(err, "error queuing broadcast task")
+				return fmt.Errorf("error queuing broadcast task: %w", err)
 			}
 		}
 	}

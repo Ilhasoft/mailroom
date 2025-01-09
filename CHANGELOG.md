@@ -1,3 +1,402 @@
+v9.2.2 (2024-07-23)
+-------------------------
+ * Simplify config param name to configure FCM relayer syncing
+ * Fix search endpoint docs
+
+v9.2.1 (2024-07-18)
+-------------------------
+ * Fix ignoring limit on contact search endpoint and improve tests
+
+v9.2.0 (2024-07-17)
+-------------------------
+ * Update README
+
+v9.1.87 (2024-07-16)
+-------------------------
+ * Update goflow which adds validation of attachments in flow definitions
+
+v9.1.86 (2024-07-16)
+-------------------------
+ * Update goflow
+
+v9.1.85 (2024-07-16)
+-------------------------
+ * Fix sending broadcast with template
+
+v9.1.84 (2024-07-16)
+-------------------------
+ * Remove special error case for broadcast with no recipients since this is no longer a thing we can resolve at request time
+
+v9.1.83 (2024-07-15)
+-------------------------
+ * Fix creating broadcasts to a flow node so that we don't save all contact ids onto the broadcast
+
+v9.1.82 (2024-07-15)
+-------------------------
+ * Refresh fields when running schedule campaign events task
+
+v9.1.81 (2024-07-15)
+-------------------------
+ * Update deps
+
+v9.1.80 (2024-07-15)
+-------------------------
+ * Use new boolean fields on template translations
+
+v9.1.79 (2024-07-12)
+-------------------------
+ * Add FCM token IDs verification
+ * Add android sync endpoint
+
+v9.1.78 (2024-07-10)
+-------------------------
+ * Stop reading from TemplateTranslation.is_active which we're going to drop
+
+v9.1.77 (2024-07-05)
+-------------------------
+ * Start populating Msg.is_android for new messages
+
+v9.1.76 (2024-07-04)
+-------------------------
+ * Add support for templates on broadcasts
+
+v9.1.75 (2024-07-03)
+-------------------------
+ * Update to latest goflow which removes namespace from assets.TemplateTranslation
+ * Remove deprecated Broadcast.template_state
+
+v9.1.74 (2024-07-03)
+-------------------------
+ * Deprecate broadcast.template_state and add broadcast.expressions
+
+v9.1.73 (2024-07-03)
+-------------------------
+ * Update goflow which changes how broadcast translations are selected
+ * Add cron to trigger sync for old seen android channels
+ * Simplify getting single channel by ID
+
+v9.1.72 (2024-07-02)
+-------------------------
+ * Fix creating broadcast to node with more than 65K contacts
+
+v9.1.71 (2024-07-02)
+-------------------------
+ * Update deps
+ * Add initial support for templates on broadcasts
+ * Replace JSONMap with JSONB generic type
+
+v9.1.70 (2024-06-25)
+-------------------------
+ * Add support for exclusions on broadcasts
+
+v9.1.69 (2024-06-20)
+-------------------------
+ * Add support for creating broadcasts with schedules
+
+v9.1.68 (2024-06-19)
+-------------------------
+ * Return no recipients case as 422 status with error code
+ * Add node UUID param to msg/broadcast endpoint
+
+v9.1.67 (2024-06-19)
+-------------------------
+ * Update FCM client
+
+v9.1.66 (2024-06-17)
+-------------------------
+ * Switch to official Elastic v8 client library
+
+v9.1.65 (2024-06-14)
+-------------------------
+ * Fix clearing wait timeouts
+
+v9.1.64 (2024-06-14)
+-------------------------
+ * Update goflow
+
+v9.1.63 (2024-06-12)
+-------------------------
+ * Update goflow
+ * Rename config setting InstanceName to InstanceID
+
+v9.1.62 (2024-06-12)
+-------------------------
+ * Update airtime to save transfer UUIDs and transaction ID as external_id
+
+v9.1.61 (2024-06-11)
+-------------------------
+ * Update goflow
+
+v9.1.60 (2024-06-10)
+-------------------------
+ * Update to latest goflow
+
+v9.1.59 (2024-06-06)
+-------------------------
+ * Add endpoint to validate and resolve URNs
+
+v9.1.58 (2024-06-06)
+-------------------------
+ * Update goflow
+
+v9.1.57 (2024-06-05)
+-------------------------
+ * Update goflow
+
+v9.1.56 (2024-06-04)
+-------------------------
+ * Replace usage of deprecated elastic scroll API
+ * Run tests on port 8091 to avoid conflicts with local dev server
+
+v9.1.55 (2024-05-27)
+-------------------------
+ * Android endpoint should return 422 for invalid phone number
+
+v9.1.54 (2024-05-24)
+-------------------------
+ * Actually update goflow
+
+v9.1.53 (2024-05-24)
+-------------------------
+ * Update deps including goflow
+
+v9.1.52 (2024-05-22)
+-------------------------
+ * Rework handling of urn, flow and query errors so they all get returned as 422s from web endpoints
+ * Use std library errors
+ * Remove unused contact/bulk_create endpoint
+
+v9.1.51 (2024-05-20)
+-------------------------
+ * Update to latest goflow and rework calling ES
+
+v9.1.50 (2024-05-17)
+-------------------------
+ * Update to latest goflow that fixes multi-version flow migrations
+
+v9.1.49 (2024-05-16)
+-------------------------
+ * Update to latest goflow
+
+v9.1.48 (2024-05-16)
+-------------------------
+ * Use is_proxy column on contact fields instead of is_system
+
+v9.1.47 (2024-05-15)
+-------------------------
+ * Update to latest goflow which normalizes search props with type prefixes
+ * Remove no longer used params on parse_query endpoint
+
+v9.1.46 (2024-05-15)
+-------------------------
+ * Update to latest goflow
+
+v9.1.45 (2024-05-09)
+-------------------------
+ * Update goflow and gocommon
+
+v9.1.44 (2024-05-09)
+-------------------------
+ * Update to latest goflow
+
+v9.1.43 (2024-05-09)
+-------------------------
+ * Update gocommon
+ * Remove support for urn field on android endpoints
+
+v9.1.42 (2024-05-08)
+-------------------------
+ * Support either urn or phone on android endpoints
+
+v9.1.41 (2024-05-08)
+-------------------------
+ * Update to latest goflow
+
+v9.1.40 (2024-05-01)
+-------------------------
+ * Update to latest goflow with flow spec 13.5
+
+v9.1.39 (2024-04-24)
+-------------------------
+ * Add contact/export endpoint so RP deosn't have to talk to elastic directly
+
+v9.1.38 (2024-04-18)
+-------------------------
+ * Update to latest goflow that removes params from templating
+
+v9.1.37 (2024-04-17)
+-------------------------
+ * Stop writing templating into msg.metadata
+
+v9.1.36 (2024-04-16)
+-------------------------
+ * Write templating to new msg.templating field
+ * Update to latest goflow
+
+v9.1.35 (2024-04-15)
+-------------------------
+ * Add support for variables on templates as separate list
+ * Update to latest indexer (used for testing)
+ * Update test database
+
+v9.1.34 (2024-04-08)
+-------------------------
+ * Revert changes to make Msg.created_on be db time because for contact history ordering we need it be event time
+
+v9.1.33 (2024-04-08)
+-------------------------
+ * Make Msg.created_on always be db insertion time and stop writing queued_on which isn't meaningful
+ * Resolve external ID for template translations
+
+v9.1.32 (2024-04-03)
+-------------------------
+ * Update channel event status when handling
+ * Remove no longer used contact/resolve endpoint
+
+v9.1.31 (2024-04-02)
+-------------------------
+ * Fix import
+
+v9.1.30 (2024-04-01)
+-------------------------
+ * Add endpoints to support Android relayer syncing
+ * Add endpoint to retry handling of an incoming message
+
+v9.1.29 (2024-04-01)
+-------------------------
+ * Consolidate code in handler tasks for loading the contact
+ * Drop support for handler tasks using event_type as task type
+
+v9.1.28 (2024-03-28)
+-------------------------
+ * Merge stop_contact event handling into channel_event handler
+
+v9.1.27 (2024-03-28)
+-------------------------
+ * Consolidate channel event tasks into one task type
+ * Rework batch tasks to take org assets and specify what asset refresh they need for that
+
+v9.1.26 (2024-03-26)
+-------------------------
+ * Rework handler tasks
+
+v9.1.25 (2024-03-21)
+-------------------------
+ * Update to latest goflow
+
+v9.1.24 (2024-03-20)
+-------------------------
+ * Update to latest goflow
+
+v9.1.23 (2024-03-20)
+-------------------------
+ * Read template components from components list field
+
+v9.1.22 (2024-03-19)
+-------------------------
+ * Read template translation components from temporary comps_as_dict field
+
+v9.1.21 (2024-03-18)
+-------------------------
+ * Fix getting group count for export preview
+
+v9.1.20 (2024-03-15)
+-------------------------
+ * Update to latest goflow
+ * Fix printing queue names in logs
+
+v9.1.19 (2024-03-14)
+-------------------------
+ * Update to latest goflow
+ * Refactor queues
+
+v9.1.18 (2024-03-13)
+-------------------------
+ * Update to latest redisx
+ * Refactor queue package and move from core to utils
+
+v9.1.17 (2024-03-07)
+-------------------------
+ * Add export preview endpoint
+
+v9.1.16 (2024-03-05)
+-------------------------
+ * Tweak logging of warning events
+ * Update to latest goflow and flow spec 13.4
+
+v9.1.15 (2024-03-05)
+-------------------------
+ * Update to latest goflow that lets us hide deprecated values from context explorer
+
+v9.1.14 (2024-03-04)
+-------------------------
+ * Update goflow
+
+v9.1.13 (2024-03-04)
+-------------------------
+ * Update to latest goflow which adds spec version 13.3
+
+v9.1.12 (2024-03-04)
+-------------------------
+ * Update to chi v5 and go 1.22
+
+v9.1.11 (2024-02-27)
+-------------------------
+ * Update to latest goflow
+ * Fix template loading SQL
+
+v9.1.10 (2024-02-23)
+-------------------------
+ * Update deps
+ * Cleanup leftover surveyor code
+
+v9.1.9 (2024-02-22)
+-------------------------
+ * Limit warning events that we log to sentry
+
+v9.1.8 (2024-02-20)
+-------------------------
+ * Fix use of context with engine service factory methods
+ * Add handler for warning events that logs to sentry
+
+v9.1.7 (2024-02-12)
+-------------------------
+ * Use template translations components field
+
+v9.1.6 (2024-02-06)
+-------------------------
+ * Email service construction should back down to parent org SMTP settings
+
+v9.1.5 (2024-02-06)
+-------------------------
+ * Read SMTP settings from org.flow_smtp instead of org.config
+
+v9.1.4 (2024-02-05)
+-------------------------
+ * Remove unused config setting and update some deps
+ * Update to latest goflow
+
+v9.1.3 (2024-01-25)
+-------------------------
+ * Revert previous change to include user name and email in messages queued to courier
+ * Update to latest goflow and start loading template translation params
+
+v9.1.2 (2024-01-23)
+-------------------------
+ * Queue messages to courier with user email and name instead of just id
+ * Update to latest goflow
+
+v9.1.1 (2024-01-16)
+-------------------------
+ * Fix queueing templating with no params
+ * Update to latest ezconf which includes support for slog.Level fields
+
+v9.1.0 (2024-01-16)
+-------------------------
+ * Convert templating variables to body component params
+ * Use redisx.NewPool
+ * Update to latest gocommon
+
 v9.0.1 (2024-01-05)
 -------------------------
  * Fix interrupting with background flows

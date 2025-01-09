@@ -10,9 +10,9 @@ import (
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/core/tasks/handler"
+	"github.com/nyaruka/mailroom/core/tasks/handler/ctasks"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/redisx"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -20,8 +20,8 @@ const (
 )
 
 func init() {
-	tasks.RegisterCron("run_expirations", false, NewExpirationsCron())
-	tasks.RegisterCron("expire_ivr_calls", false, &VoiceExpirationsCron{})
+	tasks.RegisterCron("run_expirations", NewExpirationsCron())
+	tasks.RegisterCron("expire_ivr_calls", &VoiceExpirationsCron{})
 }
 
 type ExpirationsCron struct {
@@ -38,6 +38,10 @@ func (c *ExpirationsCron) Next(last time.Time) time.Time {
 	return tasks.CronNext(last, time.Minute)
 }
 
+func (c *ExpirationsCron) AllInstances() bool {
+	return false
+}
+
 // handles waiting messaging sessions whose waits have expired, resuming those that can be resumed,
 // and expiring those that can't
 func (c *ExpirationsCron) Run(ctx context.Context, rt *runtime.Runtime) (map[string]any, error) {
@@ -50,7 +54,7 @@ func (c *ExpirationsCron) Run(ctx context.Context, rt *runtime.Runtime) (map[str
 	// select messaging sessions with expired waits
 	rows, err := rt.DB.QueryxContext(ctx, sqlSelectExpiredWaits)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error querying for expired waits")
+		return nil, fmt.Errorf("error querying for expired waits: %w", err)
 	}
 	defer rows.Close()
 
@@ -60,7 +64,7 @@ func (c *ExpirationsCron) Run(ctx context.Context, rt *runtime.Runtime) (map[str
 		expiredWait := &ExpiredWait{}
 		err := rows.StructScan(expiredWait)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error scanning expired wait")
+			return nil, fmt.Errorf("error scanning expired wait: %w", err)
 		}
 
 		// if it can't be resumed, add to batch to be expired
@@ -71,7 +75,7 @@ func (c *ExpirationsCron) Run(ctx context.Context, rt *runtime.Runtime) (map[str
 			if len(expiredSessions) == expireBatchSize {
 				err = models.ExitSessions(ctx, rt.DB, expiredSessions, models.SessionStatusExpired)
 				if err != nil {
-					return nil, errors.Wrapf(err, "error expiring batch of sessions")
+					return nil, fmt.Errorf("error expiring batch of sessions: %w", err)
 				}
 				expiredSessions = expiredSessions[:0]
 			}
@@ -84,7 +88,7 @@ func (c *ExpirationsCron) Run(ctx context.Context, rt *runtime.Runtime) (map[str
 		taskID := fmt.Sprintf("%d:%s", expiredWait.SessionID, expiredWait.WaitExpiresOn.Format(time.RFC3339))
 		queued, err := c.marker.IsMember(rc, taskID)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error checking whether expiration is queued")
+			return nil, fmt.Errorf("error checking whether expiration is queued: %w", err)
 		}
 
 		// already queued? move on
@@ -94,16 +98,15 @@ func (c *ExpirationsCron) Run(ctx context.Context, rt *runtime.Runtime) (map[str
 		}
 
 		// ok, queue this task
-		task := handler.NewExpirationTask(expiredWait.OrgID, expiredWait.ContactID, expiredWait.SessionID, expiredWait.WaitExpiresOn)
-		err = handler.QueueHandleTask(rc, expiredWait.ContactID, task)
+		err = handler.QueueTask(rc, expiredWait.OrgID, expiredWait.ContactID, ctasks.NewWaitExpiration(expiredWait.SessionID, expiredWait.WaitExpiresOn))
 		if err != nil {
-			return nil, errors.Wrapf(err, "error adding new expiration task")
+			return nil, fmt.Errorf("error adding new expiration task: %w", err)
 		}
 
 		// and mark it as queued
 		err = c.marker.Add(rc, taskID)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error marking expiration task as queued")
+			return nil, fmt.Errorf("error marking expiration task as queued: %w", err)
 		}
 
 		numQueued++
@@ -113,7 +116,7 @@ func (c *ExpirationsCron) Run(ctx context.Context, rt *runtime.Runtime) (map[str
 	if len(expiredSessions) > 0 {
 		err = models.ExitSessions(ctx, rt.DB, expiredSessions, models.SessionStatusExpired)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error expiring runs and sessions")
+			return nil, fmt.Errorf("error expiring runs and sessions: %w", err)
 		}
 	}
 
@@ -141,6 +144,10 @@ func (c *VoiceExpirationsCron) Next(last time.Time) time.Time {
 	return tasks.CronNext(last, time.Minute)
 }
 
+func (c *VoiceExpirationsCron) AllInstances() bool {
+	return false
+}
+
 // looks for voice sessions that should be expired and ends them
 func (c *VoiceExpirationsCron) Run(ctx context.Context, rt *runtime.Runtime) (map[string]any, error) {
 	log := slog.With("comp", "ivr_cron_expirer")
@@ -151,7 +158,7 @@ func (c *VoiceExpirationsCron) Run(ctx context.Context, rt *runtime.Runtime) (ma
 	// select voice sessions with expired waits
 	rows, err := rt.DB.QueryxContext(ctx, sqlSelectExpiredVoiceWaits)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error querying for expired waits")
+		return nil, fmt.Errorf("error querying for expired waits: %w", err)
 	}
 	defer rows.Close()
 
@@ -162,7 +169,7 @@ func (c *VoiceExpirationsCron) Run(ctx context.Context, rt *runtime.Runtime) (ma
 		expiredWait := &ExpiredVoiceWait{}
 		err := rows.StructScan(expiredWait)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error scanning expired wait")
+			return nil, fmt.Errorf("error scanning expired wait: %w", err)
 		}
 
 		// add the session to those we need to expire
@@ -196,7 +203,7 @@ func (c *VoiceExpirationsCron) Run(ctx context.Context, rt *runtime.Runtime) (ma
 	}
 
 	if err := models.InsertChannelLogs(ctx, rt, clogs); err != nil {
-		return nil, errors.Wrap(err, "error inserting channel logs")
+		return nil, fmt.Errorf("error inserting channel logs: %w", err)
 	}
 
 	return map[string]any{"expired": len(expiredSessions)}, nil

@@ -14,7 +14,6 @@ import (
 	"github.com/nyaruka/goflow/flows"
 	_ "github.com/nyaruka/mailroom/core/handlers"
 	"github.com/nyaruka/mailroom/core/models"
-	"github.com/nyaruka/mailroom/core/queue"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/core/tasks/campaigns"
 	"github.com/nyaruka/mailroom/runtime"
@@ -80,7 +79,7 @@ func TestQueueEventFires(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, map[string]any{"fires": 114, "dupes": 4, "tasks": 2}, res)
 
-	queuedTasks := testsuite.CurrentTasks(t, rt)
+	queuedTasks := testsuite.CurrentTasks(t, rt, "batch")
 	org1Tasks := queuedTasks[testdata.Org1.ID]
 
 	assert.Equal(t, 2, len(org1Tasks))
@@ -104,6 +103,8 @@ func TestQueueAndFireEvent(t *testing.T) {
 
 	defer testsuite.Reset(testsuite.ResetData | testsuite.ResetRedis)
 
+	oa := testdata.Org1.Load(rt)
+
 	// create due fires for Cathy and George
 	f1ID := testdata.InsertEventFire(rt, testdata.Cathy, testdata.RemindersEvent1, time.Now().Add(-time.Minute))
 	f2ID := testdata.InsertEventFire(rt, testdata.George, testdata.RemindersEvent1, time.Now().Add(-time.Minute))
@@ -114,7 +115,7 @@ func TestQueueAndFireEvent(t *testing.T) {
 	assert.NoError(t, err)
 
 	// then actually work on the event
-	task, err := queue.PopNextTask(rc, queue.BatchQueue)
+	task, err := tasks.BatchQueue.Pop(rc)
 	assert.NoError(t, err)
 	assert.NotNil(t, task)
 
@@ -122,7 +123,7 @@ func TestQueueAndFireEvent(t *testing.T) {
 	require.NoError(t, err)
 
 	// work on that task
-	err = typedTask.Perform(ctx, rt, models.OrgID(task.OrgID))
+	err = typedTask.Perform(ctx, rt, oa)
 	assert.NoError(t, err)
 
 	// should now have a flow run for that contact and flow
@@ -142,7 +143,7 @@ func TestQueueAndFireEvent(t *testing.T) {
 	assert.NoError(t, err)
 
 	// then actually work on the event
-	task, err = queue.PopNextTask(rc, queue.BatchQueue)
+	task, err = tasks.BatchQueue.Pop(rc)
 	assert.NoError(t, err)
 	assert.NotNil(t, task)
 
@@ -150,7 +151,7 @@ func TestQueueAndFireEvent(t *testing.T) {
 	require.NoError(t, err)
 
 	// work on that task
-	err = typedTask.Perform(ctx, rt, models.OrgID(task.OrgID))
+	err = typedTask.Perform(ctx, rt, oa)
 	assert.NoError(t, err)
 
 	assertdb.Query(t, rt.DB, `SELECT COUNT(*) FROM flows_flowrun WHERE contact_id = $1 AND flow_id = $2 AND status = 'W'`, testdata.George.ID, testdata.Favorites.ID).Returns(1)
@@ -168,6 +169,8 @@ func TestIVRCampaigns(t *testing.T) {
 
 	defer testsuite.Reset(testsuite.ResetAll)
 
+	oa := testdata.Org1.Load(rt)
+
 	// turn a campaign event into an IVR flow event
 	rt.DB.MustExec(`UPDATE campaigns_campaignevent SET flow_id = $1 WHERE id = $2`, testdata.IVRFlow.ID, testdata.RemindersEvent1.ID)
 
@@ -180,7 +183,7 @@ func TestIVRCampaigns(t *testing.T) {
 	assert.NoError(t, err)
 
 	// then actually work on the event
-	task, err := queue.PopNextTask(rc, queue.BatchQueue)
+	task, err := tasks.BatchQueue.Pop(rc)
 	assert.NoError(t, err)
 	assert.NotNil(t, task)
 
@@ -188,7 +191,7 @@ func TestIVRCampaigns(t *testing.T) {
 	require.NoError(t, err)
 
 	// work on that task
-	err = typedTask.Perform(ctx, rt, models.OrgID(task.OrgID))
+	err = typedTask.Perform(ctx, rt, oa)
 	assert.NoError(t, err)
 
 	// should now have a flow start created
@@ -200,7 +203,7 @@ func TestIVRCampaigns(t *testing.T) {
 	assertdb.Query(t, rt.DB, `SELECT COUNT(*) from campaigns_eventfire WHERE event_id = $1 AND fired IS NOT NULL;`, testdata.RemindersEvent1.ID).Returns(2)
 
 	// pop our next task, should be the start
-	task, err = queue.PopNextTask(rc, queue.BatchQueue)
+	task, err = tasks.BatchQueue.Pop(rc)
 	assert.NoError(t, err)
 	assert.NotNil(t, task)
 
@@ -208,7 +211,7 @@ func TestIVRCampaigns(t *testing.T) {
 }
 
 func assertFireTasks(t *testing.T, rt *runtime.Runtime, org *testdata.Org, expected [][]models.FireID) {
-	allTasks := testsuite.CurrentTasks(t, rt)
+	allTasks := testsuite.CurrentTasks(t, rt, "batch")
 	actual := make([][]models.FireID, len(allTasks[org.ID]))
 
 	for i, task := range allTasks[org.ID] {

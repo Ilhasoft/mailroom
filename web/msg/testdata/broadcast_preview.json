@@ -70,7 +70,7 @@
         },
         "status": 200,
         "response": {
-            "query": "gender = \"M\"",
+            "query": "fields.gender = \"M\"",
             "total": 0
         }
     },
@@ -124,7 +124,7 @@
         },
         "status": 200,
         "response": {
-            "query": "gender = \"M\" AND status = \"active\" AND flow = \"\" AND last_seen_on > \"07-04-2018\"",
+            "query": "fields.gender = \"M\" AND status = \"active\" AND flow = \"\" AND last_seen_on > \"07-04-2018\"",
             "total": 0
         }
     },
@@ -139,13 +139,10 @@
             },
             "exclude": {}
         },
-        "status": 400,
+        "status": 422,
         "response": {
-            "error": "mismatched input '<EOF>' expecting {TEXT, STRING}",
-            "code": "unexpected_token",
-            "extra": {
-                "token": "<EOF>"
-            }
+            "error": "mismatched input '<EOF>' expecting {STRING, PROPERTY, TEXT}",
+            "code": "query:syntax"
         }
     },
     {
@@ -159,10 +156,10 @@
             },
             "exclude": {}
         },
-        "status": 400,
+        "status": 422,
         "response": {
             "error": "can't resolve 'goats' to attribute, scheme or field",
-            "code": "unknown_property",
+            "code": "query:unknown_property",
             "extra": {
                 "property": "goats"
             }

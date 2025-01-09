@@ -21,7 +21,6 @@ import (
 	"github.com/nyaruka/goflow/utils"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
 )
 
 var courierHttpClient = &http.Client{
@@ -42,34 +41,48 @@ const (
 	MsgOriginChat      MsgOrigin = "chat"
 )
 
-type OptIn struct {
+type OptInRef struct {
 	ID   models.OptInID `json:"id"`
 	Name string         `json:"name"`
 }
 
+type FlowRef struct {
+	UUID assets.FlowUUID `json:"uuid"`
+	Name string          `json:"name"`
+}
+
+type Templating struct {
+	*flows.MsgTemplating
+	Namespace  string `json:"namespace"`
+	ExternalID string `json:"external_id"`
+	Language   string `json:"language"`
+}
+
 // Msg is the format of a message queued to courier
 type Msg struct {
-	ID                   flows.MsgID           `json:"id"`
-	UUID                 flows.MsgUUID         `json:"uuid"`
-	OrgID                models.OrgID          `json:"org_id"`
-	Origin               MsgOrigin             `json:"origin"`
-	Text                 string                `json:"text"`
-	Attachments          []utils.Attachment    `json:"attachments,omitempty"`
-	QuickReplies         []string              `json:"quick_replies,omitempty"`
-	Locale               i18n.Locale           `json:"locale,omitempty"`
-	HighPriority         bool                  `json:"high_priority"`
-	MsgCount             int                   `json:"tps_cost"`
-	CreatedOn            time.Time             `json:"created_on"`
-	ChannelUUID          assets.ChannelUUID    `json:"channel_uuid"`
-	ContactID            models.ContactID      `json:"contact_id"`
-	ContactURNID         models.URNID          `json:"contact_urn_id"`
-	URN                  urns.URN              `json:"urn"`
-	URNAuth              string                `json:"urn_auth,omitempty"`
-	Metadata             map[string]any        `json:"metadata,omitempty"`
-	Flow                 *assets.FlowReference `json:"flow,omitempty"`
-	OptIn                *OptIn                `json:"optin,omitempty"`
-	ResponseToExternalID string                `json:"response_to_external_id,omitempty"`
-	IsResend             bool                  `json:"is_resend,omitempty"`
+	ID                   models.MsgID       `json:"id"`
+	UUID                 flows.MsgUUID      `json:"uuid"`
+	OrgID                models.OrgID       `json:"org_id"`
+	Origin               MsgOrigin          `json:"origin"`
+	Text                 string             `json:"text"`
+	Attachments          []utils.Attachment `json:"attachments,omitempty"`
+	QuickReplies         []string           `json:"quick_replies,omitempty"`
+	Locale               i18n.Locale        `json:"locale,omitempty"`
+	Templating           *Templating        `json:"templating,omitempty"`
+	HighPriority         bool               `json:"high_priority"`
+	MsgCount             int                `json:"tps_cost"`
+	CreatedOn            time.Time          `json:"created_on"`
+	ChannelUUID          assets.ChannelUUID `json:"channel_uuid"`
+	ContactID            models.ContactID   `json:"contact_id"`
+	ContactURNID         models.URNID       `json:"contact_urn_id"`
+	URN                  urns.URN           `json:"urn"`
+	URNAuth              string             `json:"urn_auth,omitempty"`
+	Metadata             map[string]any     `json:"metadata,omitempty"`
+	Flow                 *FlowRef           `json:"flow,omitempty"`
+	UserID               models.UserID      `json:"user_id,omitempty"`
+	OptIn                *OptInRef          `json:"optin,omitempty"`
+	ResponseToExternalID string             `json:"response_to_external_id,omitempty"`
+	IsResend             bool               `json:"is_resend,omitempty"`
 
 	ContactLastSeenOn    *time.Time           `json:"contact_last_seen_on,omitempty"`
 	SessionID            models.SessionID     `json:"session_id,omitempty"`
@@ -94,6 +107,7 @@ func NewCourierMsg(oa *models.OrgAssets, m *models.Msg, u *models.ContactURN, ch
 		ContactID:    m.ContactID(),
 		ContactURNID: *m.ContactURNID(),
 		ChannelUUID:  ch.UUID(),
+		UserID:       m.CreatedByID(),
 		URN:          u.Identity,
 		URNAuth:      string(u.AuthTokens["default"]),
 		Metadata:     m.Metadata(),
@@ -104,7 +118,7 @@ func NewCourierMsg(oa *models.OrgAssets, m *models.Msg, u *models.ContactURN, ch
 		msg.Origin = MsgOriginFlow
 		flow, _ := oa.FlowByID(m.FlowID())
 		if flow != nil { // always a chance flow no longer exists
-			msg.Flow = flow.Reference()
+			msg.Flow = &FlowRef{UUID: flow.UUID(), Name: flow.Name()}
 		}
 	} else if m.BroadcastID() != models.NilBroadcastID {
 		msg.Origin = MsgOriginBroadcast
@@ -118,14 +132,29 @@ func NewCourierMsg(oa *models.OrgAssets, m *models.Msg, u *models.ContactURN, ch
 		// this is an optin request
 		optIn := oa.OptInByID(m.OptInID())
 		if optIn != nil {
-			msg.OptIn = &OptIn{ID: optIn.ID(), Name: optIn.Name()}
+			msg.OptIn = &OptInRef{ID: optIn.ID(), Name: optIn.Name()}
 		}
 	} else if m.OptInID() != models.NilOptInID {
 		// an optin on a broadcast message means use it for authentication
 		msg.URNAuth = u.AuthTokens[fmt.Sprintf("optin:%d", m.OptInID())]
 	}
 
-	if m.Contact != nil {
+	if m.Templating() != nil {
+		tpl := oa.TemplateByUUID(m.Templating().Template.UUID)
+		if tpl != nil {
+			tt := tpl.FindTranslation(ch, m.Locale())
+			if tt != nil {
+				msg.Templating = &Templating{
+					MsgTemplating: m.Templating().MsgTemplating,
+					Namespace:     tt.Namespace(),
+					ExternalID:    tt.ExternalID(),
+					Language:      tt.ExternalLocale(), // i.e. en_US
+				}
+			}
+		}
+	}
+
+	if m.Contact != nil && m.Contact.LastSeenOn() != nil {
 		msg.ContactLastSeenOn = m.Contact.LastSeenOn()
 	}
 
@@ -187,7 +216,7 @@ func PushCourierBatch(rc redis.Conn, oa *models.OrgAssets, ch *models.Channel, s
 		var err error
 		batch[i], err = NewCourierMsg(oa, s.Msg, s.URN, ch)
 		if err != nil {
-			return errors.Wrap(err, "error creating courier message")
+			return fmt.Errorf("error creating courier message: %w", err)
 		}
 	}
 
@@ -298,14 +327,14 @@ func FetchAttachment(ctx context.Context, rt *runtime.Runtime, ch *models.Channe
 
 	resp, err := httpx.DoTrace(courierHttpClient, req, nil, nil, -1)
 	if err != nil {
-		return "", "", errors.Wrap(err, "error calling courier endpoint")
+		return "", "", fmt.Errorf("error calling courier endpoint: %w", err)
 	}
 	if resp.Response.StatusCode != 200 {
-		return "", "", errors.Errorf("error calling courier endpoint, got non-200 status: %s", string(resp.ResponseTrace))
+		return "", "", fmt.Errorf("error calling courier endpoint, got non-200 status: %s", string(resp.ResponseTrace))
 	}
 	fa := &fetchAttachmentResponse{}
 	if err := json.Unmarshal(resp.ResponseBody, fa); err != nil {
-		return "", "", errors.Wrap(err, "error unmarshaling courier response")
+		return "", "", fmt.Errorf("error unmarshaling courier response: %w", err)
 	}
 
 	return utils.Attachment(fmt.Sprintf("%s:%s", fa.Attachment.ContentType, fa.Attachment.URL)), models.ChannelLogUUID(fa.LogUUID), nil

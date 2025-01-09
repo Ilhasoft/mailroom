@@ -3,12 +3,12 @@ package models
 import (
 	"context"
 	"database/sql/driver"
+	"fmt"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 	"github.com/nyaruka/null/v3"
-	"github.com/pkg/errors"
 )
 
 // CallID is the type for call IDs
@@ -136,7 +136,7 @@ func InsertCall(ctx context.Context, db *sqlx.DB, orgID OrgID, channelID Channel
 
 	rows, err := db.NamedQueryContext(ctx, sqlInsertCall, c)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error inserting new call")
+		return nil, fmt.Errorf("error inserting new call: %w", err)
 	}
 	defer rows.Close()
 
@@ -145,7 +145,7 @@ func InsertCall(ctx context.Context, db *sqlx.DB, orgID OrgID, channelID Channel
 	now := time.Now()
 	err = rows.Scan(&c.ID, &now)
 	if err != nil {
-		return nil, errors.Wrapf(err, "unable to scan id for new call")
+		return nil, fmt.Errorf("unable to scan id for new call: %w", err)
 	}
 
 	// add a many to many for our start if set
@@ -156,7 +156,7 @@ func InsertCall(ctx context.Context, db *sqlx.DB, orgID OrgID, channelID Channel
 			startID, c.ID,
 		)
 		if err != nil {
-			return nil, errors.Wrapf(err, "unable to add start association for call")
+			return nil, fmt.Errorf("unable to add start association for call: %w", err)
 		}
 	}
 
@@ -199,7 +199,7 @@ func GetCallByID(ctx context.Context, db DBorTx, orgID OrgID, id CallID) (*Call,
 	c := &Call{}
 	err := db.GetContext(ctx, &c.c, sqlSelectCallByID, orgID, id)
 	if err != nil {
-		return nil, errors.Wrapf(err, "unable to load call with id: %d", id)
+		return nil, fmt.Errorf("unable to load call with id: %d: %w", id, err)
 	}
 	return c, nil
 }
@@ -239,7 +239,7 @@ func GetCallByExternalID(ctx context.Context, db DBorTx, channelID ChannelID, ex
 	c := &Call{}
 	err := db.GetContext(ctx, &c.c, sqlSelectCallByExternalID, channelID, externalID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "unable to load call with external id: %s", externalID)
+		return nil, fmt.Errorf("unable to load call with external id: %s: %w", externalID, err)
 	}
 	return c, nil
 }
@@ -279,7 +279,7 @@ LIMIT
 func LoadCallsToRetry(ctx context.Context, db *sqlx.DB, limit int) ([]*Call, error) {
 	rows, err := db.QueryxContext(ctx, sqlSelectRetryCalls, limit)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error selecting calls to retry")
+		return nil, fmt.Errorf("error selecting calls to retry: %w", err)
 	}
 	defer rows.Close()
 
@@ -288,7 +288,7 @@ func LoadCallsToRetry(ctx context.Context, db *sqlx.DB, limit int) ([]*Call, err
 		c := &Call{}
 		err = rows.StructScan(&c.c)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error scanning call")
+			return nil, fmt.Errorf("error scanning call: %w", err)
 		}
 		calls = append(calls, c)
 	}
@@ -303,7 +303,7 @@ func (c *Call) UpdateExternalID(ctx context.Context, db DBorTx, id string) error
 
 	_, err := db.ExecContext(ctx, `UPDATE ivr_call SET external_id = $2, status = $3, modified_on = NOW() WHERE id = $1`, c.c.ID, c.c.ExternalID, c.c.Status)
 	if err != nil {
-		return errors.Wrapf(err, "error updating external id to: %s for call: %d", c.c.ExternalID, c.c.ID)
+		return fmt.Errorf("error updating external id to: %s for call: %d: %w", c.c.ExternalID, c.c.ID, err)
 	}
 
 	return nil
@@ -316,7 +316,7 @@ func (c *Call) MarkStarted(ctx context.Context, db DBorTx, now time.Time) error 
 
 	_, err := db.ExecContext(ctx, `UPDATE ivr_call SET status = $2, started_on = $3, modified_on = NOW() WHERE id = $1`, c.c.ID, c.c.Status, c.c.StartedOn)
 	if err != nil {
-		return errors.Wrapf(err, "error marking call as started")
+		return fmt.Errorf("error marking call as started: %w", err)
 	}
 
 	return nil
@@ -343,7 +343,7 @@ func (c *Call) MarkErrored(ctx context.Context, db DBorTx, now time.Time, retryW
 	)
 
 	if err != nil {
-		return errors.Wrapf(err, "error marking call as errored")
+		return fmt.Errorf("error marking call as errored: %w", err)
 	}
 
 	return nil
@@ -360,7 +360,7 @@ func (c *Call) MarkFailed(ctx context.Context, db DBorTx, now time.Time) error {
 	)
 
 	if err != nil {
-		return errors.Wrapf(err, "error marking call as failed")
+		return fmt.Errorf("error marking call as failed: %w", err)
 	}
 
 	return nil
@@ -374,7 +374,7 @@ func (c *Call) MarkThrottled(ctx context.Context, db DBorTx, now time.Time) erro
 
 	_, err := db.ExecContext(ctx, `UPDATE ivr_call SET status = $2, next_attempt = $3, modified_on = NOW() WHERE id = $1`, c.c.ID, c.c.Status, c.c.NextAttempt)
 	if err != nil {
-		return errors.Wrapf(err, "error marking call as throttled")
+		return fmt.Errorf("error marking call as throttled: %w", err)
 	}
 
 	return nil
@@ -395,7 +395,7 @@ func (c *Call) UpdateStatus(ctx context.Context, db DBorTx, status CallStatus, d
 	}
 
 	if err != nil {
-		return errors.Wrapf(err, "error updating status for call: %d", c.c.ID)
+		return fmt.Errorf("error updating status for call: %d: %w", c.c.ID, err)
 	}
 
 	return nil
@@ -412,7 +412,7 @@ func BulkUpdateCallStatuses(ctx context.Context, db DBorTx, callIDs []CallID, st
 	)
 
 	if err != nil {
-		return errors.Wrapf(err, "error updating call statuses")
+		return fmt.Errorf("error updating call statuses: %w", err)
 	}
 
 	return nil
@@ -421,7 +421,7 @@ func BulkUpdateCallStatuses(ctx context.Context, db DBorTx, callIDs []CallID, st
 func (c *Call) AttachLog(ctx context.Context, db DBorTx, clog *ChannelLog) error {
 	_, err := db.ExecContext(ctx, `UPDATE ivr_call SET log_uuids = array_append(log_uuids, $2) WHERE id = $1`, c.c.ID, clog.UUID())
 	if err != nil {
-		return errors.Wrap(err, "error attaching log to call")
+		return fmt.Errorf("error attaching log to call: %w", err)
 	}
 
 	clog.attached = true
@@ -433,7 +433,7 @@ func ActiveCallCount(ctx context.Context, db DBorTx, id ChannelID) (int, error) 
 	count := 0
 	err := db.GetContext(ctx, &count, `SELECT count(*) FROM ivr_call WHERE channel_id = $1 AND (status = 'W' OR status = 'I')`, id)
 	if err != nil {
-		return 0, errors.Wrapf(err, "unable to select active call count")
+		return 0, fmt.Errorf("unable to select active call count: %w", err)
 	}
 	return count, nil
 }

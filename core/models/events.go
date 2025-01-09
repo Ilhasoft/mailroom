@@ -2,6 +2,7 @@ package models
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/nyaruka/goflow/flows"
@@ -9,7 +10,6 @@ import (
 	"github.com/nyaruka/goflow/flows/modifiers"
 	"github.com/nyaruka/mailroom/core/goflow"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
 )
 
 // Scene represents the context that events are occurring in
@@ -86,7 +86,7 @@ func RegisterEventHandler(eventType string, handler EventHandler) {
 	// it's a bug if we try to register more than one handler for a type
 	_, found := eventHandlers[eventType]
 	if found {
-		panic(errors.Errorf("duplicate handler being registered for type: %s", eventType))
+		panic(fmt.Errorf("duplicate handler being registered for type: %s", eventType))
 	}
 	eventHandlers[eventType] = handler
 }
@@ -96,7 +96,7 @@ func RegisterEventPreWriteHandler(eventType string, handler EventHandler) {
 	// it's a bug if we try to register more than one handler for a type
 	_, found := preHandlers[eventType]
 	if found {
-		panic(errors.Errorf("duplicate handler being registered for type: %s", eventType))
+		panic(fmt.Errorf("duplicate handler being registered for type: %s", eventType))
 	}
 	preHandlers[eventType] = handler
 }
@@ -107,7 +107,7 @@ func HandleEvents(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *Org
 
 		handler, found := eventHandlers[e.Type()]
 		if !found {
-			return errors.Errorf("unable to find handler for event type: %s", e.Type())
+			return fmt.Errorf("unable to find handler for event type: %s", e.Type())
 		}
 
 		err := handler(ctx, rt, tx, oa, scene, e)
@@ -153,7 +153,7 @@ func ApplyEventPreCommitHooks(ctx context.Context, rt *runtime.Runtime, tx *sqlx
 	for hook, args := range preHooks {
 		err := hook.Apply(ctx, rt, tx, oa, args)
 		if err != nil {
-			return errors.Wrapf(err, "error applying pre commit hook: %T", hook)
+			return fmt.Errorf("error applying pre commit hook: %T: %w", hook, err)
 		}
 	}
 
@@ -179,7 +179,7 @@ func ApplyEventPostCommitHooks(ctx context.Context, rt *runtime.Runtime, tx *sql
 	for hook, args := range postHooks {
 		err := hook.Apply(ctx, rt, tx, oa, args)
 		if err != nil {
-			return errors.Wrapf(err, "error applying post commit hook: %v", hook)
+			return fmt.Errorf("error applying post commit hook: %v: %w", hook, err)
 		}
 	}
 
@@ -198,43 +198,43 @@ func HandleAndCommitEvents(ctx context.Context, rt *runtime.Runtime, oa *OrgAsse
 	// begin the transaction for pre-commit hooks
 	tx, err := rt.DB.BeginTxx(ctx, nil)
 	if err != nil {
-		return errors.Wrapf(err, "error beginning transaction")
+		return fmt.Errorf("error beginning transaction: %w", err)
 	}
 
 	// handle the events to create the hooks on each scene
 	for _, scene := range scenes {
 		err := HandleEvents(ctx, rt, tx, oa, scene, contactEvents[scene.Contact()])
 		if err != nil {
-			return errors.Wrapf(err, "error applying events")
+			return fmt.Errorf("error applying events: %w", err)
 		}
 	}
 
 	// gather all our pre commit events, group them by hook and apply them
 	err = ApplyEventPreCommitHooks(ctx, rt, tx, oa, scenes)
 	if err != nil {
-		return errors.Wrapf(err, "error applying pre commit hooks")
+		return fmt.Errorf("error applying pre commit hooks: %w", err)
 	}
 
 	// commit the transaction
 	if err := tx.Commit(); err != nil {
-		return errors.Wrapf(err, "error committing pre commit hooks")
+		return fmt.Errorf("error committing pre commit hooks: %w", err)
 	}
 
 	// begin the transaction for post-commit hooks
 	tx, err = rt.DB.BeginTxx(ctx, nil)
 	if err != nil {
-		return errors.Wrapf(err, "error beginning transaction for post commit")
+		return fmt.Errorf("error beginning transaction for post commit: %w", err)
 	}
 
 	// apply the post commit hooks
 	err = ApplyEventPostCommitHooks(ctx, rt, tx, oa, scenes)
 	if err != nil {
-		return errors.Wrapf(err, "error applying post commit hooks")
+		return fmt.Errorf("error applying post commit hooks: %w", err)
 	}
 
 	// commit the transaction
 	if err := tx.Commit(); err != nil {
-		return errors.Wrapf(err, "error committing post commit hooks")
+		return fmt.Errorf("error committing post commit hooks: %w", err)
 	}
 	return nil
 }
@@ -246,7 +246,7 @@ func ApplyModifiers(ctx context.Context, rt *runtime.Runtime, oa *OrgAssets, use
 	// create an environment instance with location support
 	env := flows.NewAssetsEnvironment(oa.Env(), oa.SessionAssets().Locations())
 
-	eng := goflow.Engine(rt.Config)
+	eng := goflow.Engine(rt)
 
 	eventsByContact := make(map[*flows.Contact][]flows.Event, len(modifiersByContact))
 
@@ -261,7 +261,7 @@ func ApplyModifiers(ctx context.Context, rt *runtime.Runtime, oa *OrgAssets, use
 
 	err := HandleAndCommitEvents(ctx, rt, oa, userID, eventsByContact)
 	if err != nil {
-		return nil, errors.Wrap(err, "error commiting events")
+		return nil, fmt.Errorf("error commiting events: %w", err)
 	}
 
 	return eventsByContact, nil

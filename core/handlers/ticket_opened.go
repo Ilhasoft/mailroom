@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/jmoiron/sqlx"
@@ -10,7 +11,6 @@ import (
 	"github.com/nyaruka/mailroom/core/hooks"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/pkg/errors"
 )
 
 func init() {
@@ -27,7 +27,7 @@ func handleTicketOpened(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, o
 	if event.Ticket.Topic != nil {
 		topic := oa.TopicByUUID(event.Ticket.Topic.UUID)
 		if topic == nil {
-			return errors.Errorf("unable to find topic with UUID: %s", event.Ticket.Topic.UUID)
+			return fmt.Errorf("unable to find topic with UUID: %s", event.Ticket.Topic.UUID)
 		}
 		topicID = topic.ID()
 	}
@@ -36,7 +36,7 @@ func handleTicketOpened(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, o
 	if event.Ticket.Assignee != nil {
 		assignee := oa.UserByEmail(event.Ticket.Assignee.Email)
 		if assignee == nil {
-			return errors.Errorf("unable to find user with email: %s", event.Ticket.Assignee.Email)
+			return fmt.Errorf("unable to find user with email: %s", event.Ticket.Assignee.Email)
 		}
 		assigneeID = assignee.ID()
 	}

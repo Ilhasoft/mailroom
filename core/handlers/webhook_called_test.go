@@ -122,9 +122,9 @@ func TestUnhealthyWebhookCalls(t *testing.T) {
 	defer rc.Close()
 
 	defer testsuite.Reset(testsuite.ResetData | testsuite.ResetRedis)
-	defer dates.SetNowSource(dates.DefaultNowSource)
+	defer dates.SetNowFunc(time.Now)
 
-	dates.SetNowSource(dates.NewSequentialNowSource(time.Date(2021, 11, 17, 7, 0, 0, 0, time.UTC)))
+	dates.SetNowFunc(dates.NewSequentialNow(time.Date(2021, 11, 17, 7, 0, 0, 0, time.UTC), time.Second))
 
 	flowDef, err := os.ReadFile("testdata/webhook_flow.json")
 	require.NoError(t, err)

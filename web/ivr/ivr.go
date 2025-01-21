@@ -17,6 +17,7 @@ import (
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/core/tasks/handler/ctasks"
 	"github.com/nyaruka/mailroom/runtime"
+	"github.com/nyaruka/mailroom/utils/clogs"
 	"github.com/nyaruka/mailroom/web"
 )
 
@@ -28,7 +29,7 @@ func init() {
 
 type ivrHandlerFn func(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, ch *models.Channel, svc ivr.Service, r *http.Request, w http.ResponseWriter) (*models.Call, error)
 
-func newIVRHandler(handler ivrHandlerFn, logType models.ChannelLogType) web.Handler {
+func newIVRHandler(handler ivrHandlerFn, logType clogs.LogType) web.Handler {
 	return func(ctx context.Context, rt *runtime.Runtime, r *http.Request, w http.ResponseWriter) error {
 		channelUUID := assets.ChannelUUID(r.PathValue("uuid"))
 
@@ -83,7 +84,7 @@ func newIVRHandler(handler ivrHandlerFn, logType models.ChannelLogType) web.Hand
 		clog.End()
 
 		if err := models.InsertChannelLogs(ctx, rt, []*models.ChannelLog{clog}); err != nil {
-			slog.Error("error writing ivr channel log", "error", err, "http_request", r)
+			slog.Error("error writing ivr channel log", "error", err, "elapsed", clog.Elapsed, "channel", ch.UUID())
 		}
 
 		return rerr

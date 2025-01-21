@@ -17,6 +17,7 @@ import (
 	"github.com/nyaruka/mailroom/core/runner"
 	"github.com/nyaruka/mailroom/core/tasks/handler"
 	"github.com/nyaruka/mailroom/runtime"
+	"github.com/nyaruka/mailroom/utils/clogs"
 	"github.com/nyaruka/null/v3"
 )
 
@@ -51,7 +52,7 @@ func (t *MsgEventTask) Perform(ctx context.Context, rt *runtime.Runtime, oa *mod
 
 	// fetch the attachments on the message (i.e. ask courier to fetch them)
 	attachments := make([]utils.Attachment, 0, len(t.Attachments))
-	logUUIDs := make([]models.ChannelLogUUID, 0, len(t.Attachments))
+	logUUIDs := make([]clogs.LogUUID, 0, len(t.Attachments))
 
 	// no channel, no attachments
 	if channel != nil {
@@ -123,7 +124,7 @@ func (t *MsgEventTask) Perform(ctx context.Context, rt *runtime.Runtime, oa *mod
 	trigger, keyword := models.FindMatchingMsgTrigger(oa, channel, flowContact, t.Text)
 
 	// look for a waiting session for this contact
-	session, err := models.FindWaitingSessionForContact(ctx, rt.DB, rt.SessionStorage, oa, models.FlowTypeMessaging, flowContact)
+	session, err := models.FindWaitingSessionForContact(ctx, rt, oa, models.FlowTypeMessaging, flowContact)
 	if err != nil {
 		return fmt.Errorf("error loading active session for contact: %w", err)
 	}
@@ -197,7 +198,7 @@ func (t *MsgEventTask) Perform(ctx context.Context, rt *runtime.Runtime, oa *mod
 
 			// otherwise build the trigger and start the flow directly
 			trigger := tb.Build()
-			_, err = runner.StartFlowForContacts(ctx, rt, oa, flow, []*models.Contact{contact}, []flows.Trigger{trigger}, flowMsgHook, flow.FlowType().Interrupts())
+			_, err = runner.StartFlowForContacts(ctx, rt, oa, flow, []*models.Contact{contact}, []flows.Trigger{trigger}, flowMsgHook, flow.FlowType().Interrupts(), models.NilStartID)
 			if err != nil {
 				return fmt.Errorf("error starting flow for contact: %w", err)
 			}
@@ -224,7 +225,7 @@ func (t *MsgEventTask) Perform(ctx context.Context, rt *runtime.Runtime, oa *mod
 }
 
 // handles a message as an inbox message, i.e. no flow
-func handleAsInbox(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, contact *flows.Contact, msg *flows.MsgIn, attachments []utils.Attachment, logUUIDs []models.ChannelLogUUID, ticket *models.Ticket) error {
+func handleAsInbox(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, contact *flows.Contact, msg *flows.MsgIn, attachments []utils.Attachment, logUUIDs []clogs.LogUUID, ticket *models.Ticket) error {
 	// usually last_seen_on is updated by handling the msg_received event in the engine sprint, but since this is an inbox
 	// message we manually create that event and handle it
 	msgEvent := events.NewMsgReceived(msg)
@@ -240,7 +241,7 @@ func handleAsInbox(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAsset
 }
 
 // utility to mark as message as handled and update any open contact tickets
-func markMsgHandled(ctx context.Context, db models.DBorTx, msg *flows.MsgIn, flow *models.Flow, attachments []utils.Attachment, ticket *models.Ticket, logUUIDs []models.ChannelLogUUID) error {
+func markMsgHandled(ctx context.Context, db models.DBorTx, msg *flows.MsgIn, flow *models.Flow, attachments []utils.Attachment, ticket *models.Ticket, logUUIDs []clogs.LogUUID) error {
 	flowID := models.NilFlowID
 	if flow != nil {
 		flowID = flow.ID()

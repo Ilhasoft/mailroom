@@ -3,6 +3,7 @@ package timeouts
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/nyaruka/mailroom/core/models"
@@ -14,16 +15,20 @@ import (
 )
 
 func init() {
-	tasks.RegisterCron("sessions_timeouts", newTimeoutsCron())
+	tasks.RegisterCron("sessions_timeouts", NewTimeoutsCron(10, 100))
 }
 
 type timeoutsCron struct {
-	marker *redisx.IntervalSet
+	marker        *redisx.IntervalSet
+	bulkThreshold int // use bulk task for any org with this or more timeouts
+	bulkBatchSize int // number of timeouts to queue in a single bulk task
 }
 
-func newTimeoutsCron() tasks.Cron {
+func NewTimeoutsCron(bulkThreshold, bulkBatchSize int) tasks.Cron {
 	return &timeoutsCron{
-		marker: redisx.NewIntervalSet("session_timeouts", time.Hour*24, 2),
+		marker:        redisx.NewIntervalSet("session_timeouts", time.Hour*24, 2),
+		bulkThreshold: bulkThreshold,
+		bulkBatchSize: bulkBatchSize,
 	}
 }
 
@@ -35,34 +40,33 @@ func (c *timeoutsCron) AllInstances() bool {
 	return false
 }
 
-// timeoutRuns looks for any runs that have timed out and schedules for them to continue
-// TODO: extend lock
 func (c *timeoutsCron) Run(ctx context.Context, rt *runtime.Runtime) (map[string]any, error) {
-	// find all sessions that need to be expired (we exclude IVR runs)
-	rows, err := rt.DB.QueryxContext(ctx, timedoutSessionsSQL)
+	rows, err := rt.DB.QueryxContext(ctx, sqlSelectTimedoutSessions)
 	if err != nil {
-		return nil, fmt.Errorf("error selecting timed out sessions: %w", err)
+		return nil, fmt.Errorf("error querying sessions with timed out waits: %w", err)
 	}
 	defer rows.Close()
+
+	taskID := func(t *Timeout) string { return fmt.Sprintf("%d:%s", t.SessionID, t.TimeoutOn.Format(time.RFC3339)) }
+
+	// scan and organize by org
+	byOrg := make(map[models.OrgID][]*Timeout, 50)
 
 	rc := rt.RP.Get()
 	defer rc.Close()
 
-	numQueued, numDupes := 0, 0
+	numDupes, numQueuedHandler, numQueuedBulk := 0, 0, 0
 
-	// add a timeout task for each run
-	timeout := &Timeout{}
 	for rows.Next() {
-		err := rows.StructScan(timeout)
-		if err != nil {
+		timeout := &Timeout{}
+		if err := rows.StructScan(timeout); err != nil {
 			return nil, fmt.Errorf("error scanning timeout: %w", err)
 		}
 
 		// check whether we've already queued this
-		taskID := fmt.Sprintf("%d:%s", timeout.SessionID, timeout.TimeoutOn.Format(time.RFC3339))
-		queued, err := c.marker.IsMember(rc, taskID)
+		queued, err := c.marker.IsMember(rc, taskID(timeout))
 		if err != nil {
-			return nil, fmt.Errorf("error checking whether task is queued: %w", err)
+			return nil, fmt.Errorf("error checking whether timeout is already queued: %w", err)
 		}
 
 		// already queued? move on
@@ -71,25 +75,41 @@ func (c *timeoutsCron) Run(ctx context.Context, rt *runtime.Runtime) (map[string
 			continue
 		}
 
-		// ok, queue this task
-		err = handler.QueueTask(rc, timeout.OrgID, timeout.ContactID, ctasks.NewWaitTimeout(timeout.SessionID, timeout.TimeoutOn))
-		if err != nil {
-			return nil, fmt.Errorf("error adding new handle task: %w", err)
-		}
-
-		// and mark it as queued
-		err = c.marker.Add(rc, taskID)
-		if err != nil {
-			return nil, fmt.Errorf("error marking timeout task as queued: %w", err)
-		}
-
-		numQueued++
+		byOrg[timeout.OrgID] = append(byOrg[timeout.OrgID], timeout)
 	}
 
-	return map[string]any{"dupes": numDupes, "queued": numQueued}, nil
+	for orgID, timeouts := range byOrg {
+		throttle := len(timeouts) >= c.bulkThreshold
+
+		for batch := range slices.Chunk(timeouts, c.bulkBatchSize) {
+			if throttle {
+				if err := tasks.Queue(rc, tasks.ThrottledQueue, orgID, &BulkTimeoutTask{Timeouts: batch}, true); err != nil {
+					return nil, fmt.Errorf("error queuing bulk timeout task to throttle queue: %w", err)
+				}
+				numQueuedBulk += len(batch)
+			}
+
+			for _, timeout := range batch {
+				if !throttle {
+					err := handler.QueueTask(rc, orgID, timeout.ContactID, ctasks.NewWaitTimeout(timeout.SessionID, timeout.TimeoutOn))
+					if err != nil {
+						return nil, fmt.Errorf("error queuing timeout task to handler queue: %w", err)
+					}
+					numQueuedHandler++
+				}
+
+				// mark as queued
+				if err = c.marker.Add(rc, taskID(timeout)); err != nil {
+					return nil, fmt.Errorf("error marking timeout task as queued: %w", err)
+				}
+			}
+		}
+	}
+
+	return map[string]any{"dupes": numDupes, "queued_handler": numQueuedHandler, "queued_bulk": numQueuedBulk}, nil
 }
 
-const timedoutSessionsSQL = `
+const sqlSelectTimedoutSessions = `
   SELECT id as session_id, org_id, contact_id, timeout_on
     FROM flows_flowsession
    WHERE status = 'W' AND timeout_on < NOW() AND call_id IS NULL
@@ -97,8 +117,8 @@ ORDER BY timeout_on ASC
    LIMIT 25000`
 
 type Timeout struct {
-	SessionID models.SessionID `db:"session_id"`
-	OrgID     models.OrgID     `db:"org_id"`
-	ContactID models.ContactID `db:"contact_id"`
-	TimeoutOn time.Time        `db:"timeout_on"`
+	SessionID models.SessionID `db:"session_id" json:"session_id"`
+	OrgID     models.OrgID     `db:"org_id"     json:"-"`
+	ContactID models.ContactID `db:"contact_id" json:"contact_id"`
+	TimeoutOn time.Time        `db:"timeout_on" json:"timeout_on"`
 }

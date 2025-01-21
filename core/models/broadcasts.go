@@ -21,10 +21,24 @@ type BroadcastID int
 // NilBroadcastID is our constant for a nil broadcast id
 const NilBroadcastID = BroadcastID(0)
 
+// BroadcastStatus is the type for the status of a broadcast
+type BroadcastStatus string
+
+// start status constants
+const (
+	BroadcastStatusPending     = BroadcastStatus("P")
+	BroadcastStatusQueued      = BroadcastStatus("Q")
+	BroadcastStatusStarted     = BroadcastStatus("S")
+	BroadcastStatusCompleted   = BroadcastStatus("C")
+	BroadcastStatusFailed      = BroadcastStatus("F")
+	BroadcastStatusInterrupted = BroadcastStatus("I")
+)
+
 // Broadcast represents a broadcast that needs to be sent
 type Broadcast struct {
-	ID                BroadcastID                 `json:"broadcast_id,omitempty"`
+	ID                BroadcastID                 `json:"broadcast_id,omitempty"` // null for non-persisted tasks used by flow actions
 	OrgID             OrgID                       `json:"org_id"`
+	Status            BroadcastStatus             `json:"status"`
 	Translations      flows.BroadcastTranslations `json:"translations"`
 	BaseLanguage      i18n.Language               `json:"base_language"`
 	Expressions       bool                        `json:"expressions"`
@@ -45,6 +59,7 @@ type Broadcast struct {
 type dbBroadcast struct {
 	ID                BroadcastID                        `db:"id"`
 	OrgID             OrgID                              `db:"org_id"`
+	Status            BroadcastStatus                    `db:"status"`
 	Translations      JSONB[flows.BroadcastTranslations] `db:"translations"`
 	BaseLanguage      i18n.Language                      `db:"base_language"`
 	OptInID           OptInID                            `db:"optin_id"`
@@ -67,6 +82,7 @@ func NewBroadcast(orgID OrgID, translations flows.BroadcastTranslations,
 
 	return &Broadcast{
 		OrgID:        orgID,
+		Status:       BroadcastStatusPending,
 		Translations: translations,
 		BaseLanguage: baseLanguage,
 		Expressions:  expressions,
@@ -97,39 +113,74 @@ func NewBroadcastFromEvent(ctx context.Context, tx DBorTx, oa *OrgAssets, event 
 		}
 	}
 
-	return NewBroadcast(oa.OrgID(), event.Translations, event.BaseLanguage, true, NilOptInID, groupIDs, contactIDs, event.URNs, event.ContactQuery, NoExclusions, NilUserID), nil
+	return NewBroadcast(oa.OrgID(), event.Translations, event.BaseLanguage, false, NilOptInID, groupIDs, contactIDs, event.URNs, event.ContactQuery, NoExclusions, NilUserID), nil
 }
 
-func (b *Broadcast) CreateBatch(contactIDs []ContactID, isLast bool) *BroadcastBatch {
-	return &BroadcastBatch{
-		BroadcastID:       b.ID,
-		OrgID:             b.OrgID,
-		Translations:      b.Translations,
-		BaseLanguage:      b.BaseLanguage,
-		Expressions:       b.Expressions,
-		OptInID:           b.OptInID,
-		TemplateID:        b.TemplateID,
-		TemplateVariables: b.TemplateVariables,
-		CreatedByID:       b.CreatedByID,
-		ContactIDs:        contactIDs,
-		IsLast:            isLast,
+// BroadcastBatch represents a batch of contacts that need messages sent for
+type BroadcastBatch struct {
+	// for persisted starts broadcast_id is set, for non-persisted broadcasts like flow actions, broadcast is set
+	BroadcastID BroadcastID `json:"broadcast_id,omitempty"`
+	Broadcast   *Broadcast  `json:"broadcast,omitempty"`
+
+	ContactIDs []ContactID `json:"contact_ids"`
+	IsFirst    bool        `json:"is_first"`
+	IsLast     bool        `json:"is_last"`
+}
+
+func (b *Broadcast) CreateBatch(contactIDs []ContactID, isFirst, isLast bool) *BroadcastBatch {
+	bb := &BroadcastBatch{
+		ContactIDs: contactIDs,
+		IsFirst:    isFirst,
+		IsLast:     isLast,
 	}
+
+	if b.ID != NilBroadcastID {
+		bb.BroadcastID = b.ID
+	} else {
+		bb.Broadcast = b
+	}
+
+	return bb
 }
 
-// MarkBroadcastSent marks the given broadcast as sent
-func MarkBroadcastSent(ctx context.Context, db DBorTx, id BroadcastID) error {
-	_, err := db.ExecContext(ctx, `UPDATE msgs_broadcast SET status = 'S', modified_on = now() WHERE id = $1`, id)
-	if err != nil {
-		return fmt.Errorf("error marking broadcast #%d as sent: %w", id, err)
+// SetStarted sets the status of this broadcast to QUEUED, if it's not already set to INTERRUPTED
+func (b *Broadcast) SetQueued(ctx context.Context, db DBorTx, contactCount int) error {
+	if b.Status != BroadcastStatusInterrupted {
+		b.Status = BroadcastStatusQueued
+	}
+	if b.ID != NilBroadcastID {
+		_, err := db.ExecContext(ctx, "UPDATE msgs_broadcast SET status = 'Q', contact_count = $2, modified_on = NOW() WHERE id = $1 AND status != 'I'", b.ID, contactCount)
+		if err != nil {
+			return fmt.Errorf("error setting broadcast #%d as queued: %w", b.ID, err)
+		}
 	}
 	return nil
 }
 
-// MarkBroadcastFailed marks the given broadcast as failed
-func MarkBroadcastFailed(ctx context.Context, db DBorTx, id BroadcastID) error {
-	_, err := db.ExecContext(ctx, `UPDATE msgs_broadcast SET status = 'S', modified_on = now() WHERE id = $1`, id)
-	if err != nil {
-		return fmt.Errorf("error marking broadcast #%d as failed: %w", id, err)
+// SetStarted sets the status of this broadcast to STARTED, if it's not already set to INTERRUPTED
+func (b *Broadcast) SetStarted(ctx context.Context, db DBorTx) error {
+	return b.setStatus(ctx, db, BroadcastStatusStarted)
+}
+
+// SetCompleted sets the status of this broadcast to COMPLETED, if it's not already set to INTERRUPTED
+func (b *Broadcast) SetCompleted(ctx context.Context, db DBorTx) error {
+	return b.setStatus(ctx, db, BroadcastStatusCompleted)
+}
+
+// SetFailed sets the status of this broadcast to FAILED, if it's not already set to INTERRUPTED
+func (b *Broadcast) SetFailed(ctx context.Context, db DBorTx) error {
+	return b.setStatus(ctx, db, BroadcastStatusFailed)
+}
+
+func (b *Broadcast) setStatus(ctx context.Context, db DBorTx, status BroadcastStatus) error {
+	if b.Status != BroadcastStatusInterrupted {
+		b.Status = status
+	}
+	if b.ID != NilBroadcastID {
+		_, err := db.ExecContext(ctx, "UPDATE msgs_broadcast SET status = $2, modified_on = NOW() WHERE id = $1 AND status != 'I'", b.ID, status)
+		if err != nil {
+			return fmt.Errorf("error updating broadcast #%d with status=%s: %w", b.ID, status, err)
+		}
 	}
 	return nil
 }
@@ -139,6 +190,7 @@ func InsertBroadcast(ctx context.Context, db DBorTx, bcast *Broadcast) error {
 	dbb := &dbBroadcast{
 		ID:                bcast.ID,
 		OrgID:             bcast.OrgID,
+		Status:            bcast.Status,
 		Translations:      JSONB[flows.BroadcastTranslations]{bcast.Translations},
 		BaseLanguage:      bcast.BaseLanguage,
 		OptInID:           bcast.OptInID,
@@ -191,6 +243,7 @@ func InsertBroadcast(ctx context.Context, db DBorTx, bcast *Broadcast) error {
 func InsertChildBroadcast(ctx context.Context, db DBorTx, parent *Broadcast) (*Broadcast, error) {
 	child := &Broadcast{
 		OrgID:             parent.OrgID,
+		Status:            BroadcastStatusPending,
 		Translations:      parent.Translations,
 		BaseLanguage:      parent.BaseLanguage,
 		Expressions:       parent.Expressions,
@@ -221,31 +274,41 @@ type broadcastGroup struct {
 
 const sqlInsertBroadcast = `
 INSERT INTO
-	msgs_broadcast( org_id,  parent_id, created_on, modified_on, status,  translations,  base_language,  template_id,  template_variables,  urns,  query,  node_uuid,  exclusions,  optin_id,  schedule_id, is_active)
-			VALUES(:org_id, :parent_id, NOW()     , NOW(),       'Q',    :translations, :base_language, :template_id, :template_variables, :urns, :query, :node_uuid, :exclusions, :optin_id, :schedule_id,      TRUE)
+	msgs_broadcast( org_id,  parent_id, created_on, modified_on,  status,  translations,  base_language,  template_id,  template_variables,  urns,  query,  node_uuid,  exclusions,  optin_id,  schedule_id, is_active)
+			VALUES(:org_id, :parent_id, NOW()     , NOW(),       :status, :translations, :base_language, :template_id, :template_variables, :urns, :query, :node_uuid, :exclusions, :optin_id, :schedule_id,      TRUE)
 RETURNING id`
 
 const sqlInsertBroadcastContacts = `INSERT INTO msgs_broadcast_contacts(broadcast_id, contact_id) VALUES(:broadcast_id, :contact_id)`
 const sqlInsertBroadcastGroups = `INSERT INTO msgs_broadcast_groups(broadcast_id, contactgroup_id) VALUES(:broadcast_id, :contactgroup_id)`
 
-// BroadcastBatch represents a batch of contacts that need messages sent for
-type BroadcastBatch struct {
-	BroadcastID       BroadcastID                 `json:"broadcast_id,omitempty"`
-	OrgID             OrgID                       `json:"org_id"`
-	Translations      flows.BroadcastTranslations `json:"translations"`
-	BaseLanguage      i18n.Language               `json:"base_language"`
-	Expressions       bool                        `json:"expressions"`
-	OptInID           OptInID                     `json:"optin_id,omitempty"`
-	TemplateID        TemplateID                  `json:"template_id,omitempty"`
-	TemplateVariables []string                    `json:"template_variables,omitempty"`
-	ContactIDs        []ContactID                 `json:"contact_ids"`
-	CreatedByID       UserID                      `json:"created_by_id"`
-	IsLast            bool                        `json:"is_last"`
+const sqlGetBroadcastByID = `
+SELECT id, org_id, status, translations, base_language, optin_id, template_id, template_variables, created_by_id
+  FROM msgs_broadcast 
+ WHERE id = $1`
+
+// GetBroadcastByID gets a broadcast by it's ID - NOTE this does not load all attributes of the broadcast
+func GetBroadcastByID(ctx context.Context, db DBorTx, bcastID BroadcastID) (*Broadcast, error) {
+	b := &dbBroadcast{}
+	if err := db.GetContext(ctx, b, sqlGetBroadcastByID, bcastID); err != nil {
+		return nil, fmt.Errorf("error loading broadcast #%d: %w", bcastID, err)
+	}
+	return &Broadcast{
+		ID:                b.ID,
+		OrgID:             b.OrgID,
+		Status:            b.Status,
+		Translations:      b.Translations.V,
+		BaseLanguage:      b.BaseLanguage,
+		Expressions:       true,
+		OptInID:           b.OptInID,
+		TemplateID:        b.TemplateID,
+		TemplateVariables: b.TemplateVariables,
+		CreatedByID:       b.CreatedByID,
+	}, nil
 }
 
-func (b *BroadcastBatch) CreateMessages(ctx context.Context, rt *runtime.Runtime, oa *OrgAssets) ([]*Msg, error) {
+func (b *Broadcast) CreateMessages(ctx context.Context, rt *runtime.Runtime, oa *OrgAssets, batch *BroadcastBatch) ([]*Msg, error) {
 	// load all our contacts
-	contacts, err := LoadContacts(ctx, rt.DB, oa, b.ContactIDs)
+	contacts, err := LoadContacts(ctx, rt.DB, oa, batch.ContactIDs)
 	if err != nil {
 		return nil, fmt.Errorf("error loading contacts for broadcast: %w", err)
 	}
@@ -274,7 +337,7 @@ func (b *BroadcastBatch) CreateMessages(ctx context.Context, rt *runtime.Runtime
 }
 
 // creates an outgoing message for the given contact - can return nil if resultant message has no content and thus is a noop
-func (b *BroadcastBatch) createMessage(rt *runtime.Runtime, oa *OrgAssets, c *Contact) (*Msg, error) {
+func (b *Broadcast) createMessage(rt *runtime.Runtime, oa *OrgAssets, c *Contact) (*Msg, error) {
 	contact, err := c.FlowContact(oa)
 	if err != nil {
 		return nil, fmt.Errorf("error creating flow contact for broadcast message: %w", err)

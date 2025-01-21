@@ -16,14 +16,12 @@ func init() {
 	models.RegisterEventHandler(events.TypeBroadcastCreated, handleBroadcastCreated)
 }
 
-// handleBroadcastCreated is called for each broadcast created event across our scene
 func handleBroadcastCreated(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *models.OrgAssets, scene *models.Scene, e flows.Event) error {
 	event := e.(*events.BroadcastCreatedEvent)
 
 	slog.Debug("broadcast created", "contact", scene.ContactUUID(), "session", scene.SessionID(), "translations", event.Translations[event.BaseLanguage])
 
-	// schedule this for being started after our scene are committed
-	scene.AppendToEventPostCommitHook(hooks.StartBroadcastsHook, event)
+	scene.AppendToEventPostCommitHook(hooks.CreateBroadcastsHook, event)
 
 	return nil
 }

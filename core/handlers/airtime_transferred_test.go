@@ -292,7 +292,7 @@ func TestAirtimeTransferred(t *testing.T) {
 		{
 			Actions: handlers.ContactActionMap{
 				testdata.Cathy: []flows.Action{
-					actions.NewTransferAirtime(handlers.NewActionUUID(), map[string]decimal.Decimal{"USD": decimal.RequireFromString(`3.50`)}, "Transfer"),
+					actions.NewTransferAirtime(handlers.NewActionUUID(), map[string]decimal.Decimal{"USD": decimal.RequireFromString(`3.0`)}, "Transfer"),
 				},
 			},
 			SQLAssertions: []handlers.SQLAssertion{
@@ -311,7 +311,7 @@ func TestAirtimeTransferred(t *testing.T) {
 		{
 			Actions: handlers.ContactActionMap{
 				testdata.George: []flows.Action{
-					actions.NewTransferAirtime(handlers.NewActionUUID(), map[string]decimal.Decimal{"USD": decimal.RequireFromString(`3.50`)}, "Transfer"),
+					actions.NewTransferAirtime(handlers.NewActionUUID(), map[string]decimal.Decimal{"USD": decimal.RequireFromString(`3`)}, "Transfer"),
 				},
 			},
 			SQLAssertions: []handlers.SQLAssertion{

@@ -39,7 +39,7 @@ func TestCampaigns(t *testing.T) {
 	tcs := []handlers.TestCase{
 		{
 			Msgs: handlers.ContactMsgMap{
-				testdata.Cathy: flows.NewMsgIn(flows.MsgUUID(uuids.New()), testdata.Cathy.URN, nil, "Hi there", nil),
+				testdata.Cathy: flows.NewMsgIn(flows.MsgUUID(uuids.NewV4()), testdata.Cathy.URN, nil, "Hi there", nil),
 			},
 			Actions: handlers.ContactActionMap{
 				testdata.Cathy: []flows.Action{

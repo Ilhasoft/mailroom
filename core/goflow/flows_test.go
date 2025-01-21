@@ -2,6 +2,7 @@ package goflow_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/Masterminds/semver"
 	"github.com/nyaruka/gocommon/i18n"
@@ -15,7 +16,7 @@ import (
 )
 
 func TestSpecVersion(t *testing.T) {
-	assert.Equal(t, semver.MustParse("13.5.0"), goflow.SpecVersion())
+	assert.Equal(t, semver.MustParse("13.6.1"), goflow.SpecVersion())
 }
 
 func TestReadFlow(t *testing.T) {
@@ -43,7 +44,7 @@ func TestReadFlow(t *testing.T) {
 }
 
 func TestCloneDefinition(t *testing.T) {
-	uuids.SetGenerator(uuids.NewSeededGenerator(12345))
+	uuids.SetGenerator(uuids.NewSeededGenerator(12345, time.Now))
 	defer uuids.SetGenerator(uuids.DefaultGenerator)
 
 	cloned, err := goflow.CloneDefinition([]byte(`{"uuid": "502c3ee4-3249-4dee-8e71-c62070667d52", "name": "New", "spec_version": "13.0.0", "type": "messaging", "language": "eng", "nodes": []}`), nil)
@@ -54,7 +55,7 @@ func TestCloneDefinition(t *testing.T) {
 func TestMigrateDefinition(t *testing.T) {
 	_, rt := testsuite.Runtime()
 
-	uuids.SetGenerator(uuids.NewSeededGenerator(12345))
+	uuids.SetGenerator(uuids.NewSeededGenerator(12345, time.Now))
 	defer uuids.SetGenerator(uuids.DefaultGenerator)
 
 	v13_0_0 := testsuite.ReadFile("testdata/migrate/13.0.0.json")
@@ -63,6 +64,8 @@ func TestMigrateDefinition(t *testing.T) {
 	v13_3_0 := testsuite.ReadFile("testdata/migrate/13.3.0.json")
 	v13_4_0 := testsuite.ReadFile("testdata/migrate/13.4.0.json")
 	v13_5_0 := testsuite.ReadFile("testdata/migrate/13.5.0.json")
+	//v13_6_0 := testsuite.ReadFile("testdata/migrate/13.6.0.json")
+	v13_6_1 := testsuite.ReadFile("testdata/migrate/13.6.1.json")
 
 	// 13.0 > 13.1
 	migrated, err := goflow.MigrateDefinition(rt.Config, v13_0_0, semver.MustParse("13.1.0"))
@@ -89,8 +92,18 @@ func TestMigrateDefinition(t *testing.T) {
 	assert.NoError(t, err)
 	test.AssertEqualJSON(t, v13_5_0, migrated)
 
-	// 13.0 > 13.5
-	migrated, err = goflow.MigrateDefinition(rt.Config, v13_0_0, semver.MustParse("13.5.0"))
+	// 13.5 > 13.6
+	migrated, err = goflow.MigrateDefinition(rt.Config, migrated, semver.MustParse("13.6.0"))
 	assert.NoError(t, err)
-	test.AssertEqualJSON(t, v13_5_0, migrated)
+	test.AssertEqualJSON(t, v13_6_1, migrated) // because we bump to the latest patch version
+
+	// 13.6 > 13.6.1
+	migrated, err = goflow.MigrateDefinition(rt.Config, migrated, semver.MustParse("13.6.1"))
+	assert.NoError(t, err)
+	test.AssertEqualJSON(t, v13_6_1, migrated)
+
+	// 13.0 > 13.6.1
+	migrated, err = goflow.MigrateDefinition(rt.Config, v13_0_0, semver.MustParse("13.6.1"))
+	assert.NoError(t, err)
+	test.AssertEqualJSON(t, v13_6_1, migrated)
 }

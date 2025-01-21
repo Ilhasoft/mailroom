@@ -17,6 +17,13 @@ func TestFields(t *testing.T) {
 	oa, err := models.GetOrgAssetsWithRefresh(ctx, rt, testdata.Org1.ID, models.RefreshFields)
 	require.NoError(t, err)
 
+	fields, err := oa.Fields()
+	require.NoError(t, err)
+	assert.Len(t, fields, 6) // excludes the proxy fields
+	assert.Equal(t, "age", fields[0].Key())
+	assert.Equal(t, "Age", fields[0].Name())
+	assert.Equal(t, assets.FieldTypeNumber, fields[0].Type())
+
 	expectedFields := []struct {
 		field     testdata.Field
 		key       string

@@ -35,15 +35,15 @@ func TestForemanAndWorkers(t *testing.T) {
 	tasks.RegisterType("test", func() tasks.Task { return &testTask{} })
 
 	// queue up tasks of unknown type to ensure it doesn't break further processing
-	q.Push(rc, "spam", 1, "argh", queues.DefaultPriority)
-	q.Push(rc, "spam", 2, "argh", queues.DefaultPriority)
+	q.Push(rc, "spam", 1, "argh", false)
+	q.Push(rc, "spam", 2, "argh", false)
 
 	// queue up 5 tasks for two orgs
 	for range 5 {
-		q.Push(rc, "test", 1, &testTask{}, queues.DefaultPriority)
+		q.Push(rc, "test", 1, &testTask{}, false)
 	}
 	for range 5 {
-		q.Push(rc, "test", 2, &testTask{}, queues.DefaultPriority)
+		q.Push(rc, "test", 2, &testTask{}, false)
 	}
 
 	fm := mailroom.NewForeman(rt, wg, q, 2)

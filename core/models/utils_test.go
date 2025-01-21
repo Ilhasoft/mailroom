@@ -59,3 +59,34 @@ func TestBulkQueryBatches(t *testing.T) {
 	assertdb.Query(t, rt.DB, `SELECT count(*) FROM foo WHERE name = 'G' AND age = 36`).Returns(1)
 	assertdb.Query(t, rt.DB, `SELECT count(*) FROM foo `).Returns(7)
 }
+
+func TestJSONB(t *testing.T) {
+	ctx, rt := testsuite.Runtime()
+
+	defer rt.DB.MustExec(`DROP TABLE foo;`)
+
+	rt.DB.MustExec(`CREATE TABLE foo (id serial NOT NULL PRIMARY KEY, value JSONB NULL)`)
+
+	type fooValue struct {
+		Name string `json:"name"`
+	}
+
+	type foo struct {
+		ID    int                    `db:"id"`
+		Value models.JSONB[fooValue] `db:"value"`
+	}
+
+	foo1 := &foo{Value: models.JSONB[fooValue]{fooValue{Name: "A"}}}
+
+	err := models.BulkQuery(ctx, "inserting foo", rt.DB, `INSERT INTO foo (value) VALUES(:value) RETURNING id`, []*foo{foo1})
+	assert.NoError(t, err)
+	assertdb.Query(t, rt.DB, `SELECT count(*) FROM foo WHERE value->>'name' = 'A'`).Returns(1)
+
+	sqlSelect := `SELECT id, value FROM foo WHERE id = $1`
+
+	foo2 := &foo{}
+	err = rt.DB.GetContext(ctx, foo2, sqlSelect, foo1.ID)
+	assert.NoError(t, err)
+	assert.NotNil(t, foo2.Value)
+	assert.Equal(t, "A", foo2.Value.V.Name)
+}

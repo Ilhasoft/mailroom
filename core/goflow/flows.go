@@ -53,6 +53,11 @@ func CloneDefinition(data []byte, depMapping map[uuids.UUID]uuids.UUID) ([]byte,
 
 // MigrateDefinition migrates the given flow definition to the specified version
 func MigrateDefinition(cfg *runtime.Config, data []byte, toVersion *semver.Version) ([]byte, error) {
+	// if requested version only differs by patch from current version, use current version
+	if toVersion == nil || (toVersion.LessThan(definition.CurrentSpecVersion) && toVersion.Major() == definition.CurrentSpecVersion.Major() && toVersion.Minor() == definition.CurrentSpecVersion.Minor()) {
+		toVersion = definition.CurrentSpecVersion
+	}
+
 	f, err := migrations.MigrateToVersion(data, toVersion, MigrationConfig(cfg))
 	if err != nil {
 		return nil, &FlowDefError{cause: err}

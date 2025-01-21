@@ -66,12 +66,12 @@ func TestQueueEventFires(t *testing.T) {
 	assertFireTasks(t, rt, testdata.Org2, [][]models.FireID{{fire3ID}})
 
 	// clear queued tasks
-	rc.Do("DEL", "batch:active")
-	rc.Do("DEL", "batch:1")
+	rc.Do("DEL", "tasks:batch:active")
+	rc.Do("DEL", "tasks:batch:1")
 
 	// add 110 scheduled event fires to test batch limits
 	for i := 0; i < 110; i++ {
-		contact := testdata.InsertContact(rt, testdata.Org1, flows.ContactUUID(uuids.New()), fmt.Sprintf("Jim %d", i), i18n.NilLanguage, models.ContactStatusActive)
+		contact := testdata.InsertContact(rt, testdata.Org1, flows.ContactUUID(uuids.NewV4()), fmt.Sprintf("Jim %d", i), i18n.NilLanguage, models.ContactStatusActive)
 		testdata.InsertEventFire(rt, contact, testdata.RemindersEvent1, time.Now().Add(-time.Minute))
 	}
 

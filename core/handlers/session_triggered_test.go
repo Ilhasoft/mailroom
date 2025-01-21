@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/nyaruka/gocommon/uuids"
 	"github.com/nyaruka/goflow/assets"
@@ -22,28 +23,18 @@ func TestSessionTriggered(t *testing.T) {
 
 	defer testsuite.Reset(testsuite.ResetAll)
 
-	oa, err := models.GetOrgAssets(ctx, rt, testdata.Org1.ID)
-	assert.NoError(t, err)
-
-	simpleFlow, err := oa.FlowByID(testdata.SingleMessage.ID)
-	assert.NoError(t, err)
-
-	contactRef := &flows.ContactReference{
-		UUID: testdata.George.UUID,
-	}
-
 	groupRef := &assets.GroupReference{
 		UUID: testdata.TestersGroup.UUID,
 	}
 
-	uuids.SetGenerator(uuids.NewSeededGenerator(1234567))
+	uuids.SetGenerator(uuids.NewSeededGenerator(1234567, time.Now))
 	defer uuids.SetGenerator(uuids.DefaultGenerator)
 
 	tcs := []handlers.TestCase{
 		{
 			Actions: handlers.ContactActionMap{
 				testdata.Cathy: []flows.Action{
-					actions.NewStartSession(handlers.NewActionUUID(), simpleFlow.Reference(), nil, []*flows.ContactReference{contactRef}, []*assets.GroupReference{groupRef}, nil, true),
+					actions.NewStartSession(handlers.NewActionUUID(), testdata.SingleMessage.Reference(), []*assets.GroupReference{groupRef}, []*flows.ContactReference{testdata.George.Reference()}, "", nil, nil, true),
 				},
 			},
 			SQLAssertions: []handlers.SQLAssertion{
@@ -52,20 +43,9 @@ func TestSessionTriggered(t *testing.T) {
 					Args:  []any{testdata.Cathy.ID},
 					Count: 1,
 				},
-				{
-					SQL:   "select count(*) from flows_flowstart where org_id = 1 AND start_type = 'F' AND flow_id = $1 AND status = 'P' AND parent_summary IS NOT NULL AND session_history IS NOT NULL;",
-					Args:  []any{testdata.SingleMessage.ID},
-					Count: 1,
-				},
-				{
-					SQL:   "select count(*) from flows_flowstart_contacts where id = 1 AND contact_id = $1",
-					Args:  []any{testdata.George.ID},
-					Count: 1,
-				},
-				{
-					SQL:   "select count(*) from flows_flowstart_groups where id = 1 AND contactgroup_id = $1",
-					Args:  []any{testdata.TestersGroup.ID},
-					Count: 1,
+				{ // check we don't create a start in the database
+					SQL:   "select count(*) from flows_flowstart where org_id = 1",
+					Count: 0,
 				},
 			},
 			Assertions: []handlers.Assertion{
@@ -82,9 +62,23 @@ func TestSessionTriggered(t *testing.T) {
 					assert.True(t, start.CreateContact)
 					assert.Equal(t, []models.ContactID{testdata.George.ID}, start.ContactIDs)
 					assert.Equal(t, []models.GroupID{testdata.TestersGroup.ID}, start.GroupIDs)
-					assert.Equal(t, simpleFlow.ID(), start.FlowID)
-					assert.JSONEq(t, `{"parent_uuid":"39a9f95e-3641-4d19-95e0-ed866f27c829", "ancestors":1, "ancestors_since_input":1}`, string(start.SessionHistory))
+					assert.Equal(t, testdata.SingleMessage.ID, start.FlowID)
+					assert.JSONEq(t, `{"parent_uuid":"36284611-ea19-4f1f-8611-9bc48e206654", "ancestors":1, "ancestors_since_input":1}`, string(start.SessionHistory))
 					return nil
+				},
+			},
+		},
+		{
+			Actions: handlers.ContactActionMap{
+				testdata.Bob: []flows.Action{
+					actions.NewStartSession(handlers.NewActionUUID(), testdata.IVRFlow.Reference(), nil, []*flows.ContactReference{testdata.Alexandria.Reference()}, "", nil, nil, true),
+				},
+			},
+			SQLAssertions: []handlers.SQLAssertion{
+				{ // check that we do have a start in the database because it's an IVR flow
+					SQL:   "select count(*) from flows_flowstart where org_id = 1 AND flow_id = $1",
+					Args:  []any{testdata.IVRFlow.ID},
+					Count: 1,
 				},
 			},
 		},
@@ -104,19 +98,11 @@ func TestQuerySessionTriggered(t *testing.T) {
 	favoriteFlow, err := oa.FlowByID(testdata.Favorites.ID)
 	assert.NoError(t, err)
 
-	sessionAction := actions.NewStartSession(handlers.NewActionUUID(), favoriteFlow.Reference(), nil, nil, nil, nil, true)
-	sessionAction.ContactQuery = "name ~ @contact.name"
-
 	tcs := []handlers.TestCase{
 		{
 			Actions: handlers.ContactActionMap{
-				testdata.Cathy: []flows.Action{sessionAction},
-			},
-			SQLAssertions: []handlers.SQLAssertion{
-				{
-					SQL:   `select count(*) from flows_flowstart where flow_id = $1 AND start_type = 'F' AND status = 'P' AND query = 'name ~ "Cathy"' AND parent_summary IS NOT NULL;`,
-					Args:  []any{testdata.Favorites.ID},
-					Count: 1,
+				testdata.Cathy: []flows.Action{
+					actions.NewStartSession(handlers.NewActionUUID(), favoriteFlow.Reference(), nil, nil, "name ~ @contact.name", nil, nil, true),
 				},
 			},
 			Assertions: []handlers.Assertion{

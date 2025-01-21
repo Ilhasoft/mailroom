@@ -57,11 +57,10 @@ func handleTicketOpened(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, o
 		openedInID,
 		scene.ContactID(),
 		topicID,
-		event.Ticket.Body,
 		assigneeID,
 	)
 
-	scene.AppendToEventPreCommitHook(hooks.InsertTicketsHook, ticket)
+	scene.AppendToEventPreCommitHook(hooks.InsertTicketsHook, hooks.TicketAndNote{Ticket: ticket, Note: event.Note})
 
 	return nil
 }

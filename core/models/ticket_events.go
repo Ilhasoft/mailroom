@@ -36,8 +36,8 @@ type TicketEvent struct {
 	}
 }
 
-func NewTicketOpenedEvent(t *Ticket, userID UserID, assigneeID UserID) *TicketEvent {
-	return newTicketEvent(t, userID, TicketEventTypeOpened, "", NilTopicID, assigneeID)
+func NewTicketOpenedEvent(t *Ticket, userID UserID, assigneeID UserID, note string) *TicketEvent {
+	return newTicketEvent(t, userID, TicketEventTypeOpened, note, NilTopicID, assigneeID)
 }
 
 func NewTicketAssignedEvent(t *Ticket, userID UserID, assigneeID UserID) *TicketEvent {

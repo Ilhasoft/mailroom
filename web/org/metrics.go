@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/nyaruka/gocommon/uuids"
 	"github.com/nyaruka/goflow/assets"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
@@ -34,8 +34,8 @@ type groupCountRow struct {
 	Count    int64            `db:"count"`
 }
 
-func calculateGroupCounts(ctx context.Context, rt *runtime.Runtime, org *models.OrgReference) (*dto.MetricFamily, error) {
-	rows, err := rt.DB.QueryxContext(ctx, groupCountsSQL, org.ID)
+func calculateGroupCounts(ctx context.Context, rt *runtime.Runtime, org *models.Org) (*dto.MetricFamily, error) {
+	rows, err := rt.DB.QueryxContext(ctx, groupCountsSQL, org.ID())
 	if err != nil {
 		return nil, fmt.Errorf("error querying group counts for org: %w", err)
 	}
@@ -65,7 +65,7 @@ func calculateGroupCounts(ctx context.Context, rt *runtime.Runtime, org *models.
 				Label: []*dto.LabelPair{
 					{
 						Name:  proto.String("group_name"),
-						Value: proto.String(row.Name),
+						Value: proto.String(strings.TrimPrefix(row.Name, "\\")),
 					},
 					{
 						Name:  proto.String("group_uuid"),
@@ -77,7 +77,7 @@ func calculateGroupCounts(ctx context.Context, rt *runtime.Runtime, org *models.
 					},
 					{
 						Name:  proto.String("org"),
-						Value: proto.String(org.Name),
+						Value: proto.String(org.Name()),
 					},
 				},
 				Gauge: &dto.Gauge{
@@ -116,8 +116,8 @@ type channelStats struct {
 	Counts      map[string]int64
 }
 
-func calculateChannelCounts(ctx context.Context, rt *runtime.Runtime, org *models.OrgReference) (*dto.MetricFamily, error) {
-	rows, err := rt.DB.QueryxContext(ctx, channelCountsSQL, org.ID)
+func calculateChannelCounts(ctx context.Context, rt *runtime.Runtime, org *models.Org) (*dto.MetricFamily, error) {
+	rows, err := rt.DB.QueryxContext(ctx, channelCountsSQL, org.ID())
 	if err != nil {
 		return nil, fmt.Errorf("error querying channel counts for org: %w", err)
 	}
@@ -218,7 +218,7 @@ func calculateChannelCounts(ctx context.Context, rt *runtime.Runtime, org *model
 						},
 						{
 							Name:  proto.String("org"),
-							Value: proto.String(org.Name),
+							Value: proto.String(org.Name()),
 						},
 					},
 					Gauge: &dto.Gauge{
@@ -241,26 +241,36 @@ func handleMetrics(ctx context.Context, rt *runtime.Runtime, r *http.Request, ra
 		return nil
 	}
 
-	orgUUID := uuids.UUID(r.PathValue("uuid"))
-	org, err := models.LookupOrgByUUIDAndToken(ctx, rt.DB, orgUUID, "Prometheus", token)
+	orgID, err := models.GetOrgIDFromUUID(ctx, rt.DB.DB, models.OrgUUID(r.PathValue("uuid")))
 	if err != nil {
-		return fmt.Errorf("error looking up org for token: %w", err)
+		return fmt.Errorf("error looking up org by UUID: %w", err)
 	}
 
-	if org == nil {
+	if orgID == models.NilOrgID {
 		rawW.WriteHeader(http.StatusUnauthorized)
 		rawW.Write([]byte(`{"error": "invalid authentication"}`))
 		return nil
 	}
 
-	groups, err := calculateGroupCounts(ctx, rt, org)
+	oa, err := models.GetOrgAssets(ctx, rt, orgID)
 	if err != nil {
-		return fmt.Errorf("error calculating group counts for org: %d: %w", org.ID, err)
+		return fmt.Errorf("unable to load org assets: %w", err)
 	}
 
-	channels, err := calculateChannelCounts(ctx, rt, org)
+	if oa.Org().PrometheusToken() != token {
+		rawW.WriteHeader(http.StatusUnauthorized)
+		rawW.Write([]byte(`{"error": "invalid authentication"}`))
+		return nil
+	}
+
+	groups, err := calculateGroupCounts(ctx, rt, oa.Org())
 	if err != nil {
-		return fmt.Errorf("error calculating channel counts for org: %d: %w", org.ID, err)
+		return fmt.Errorf("error calculating group counts for org: %d: %w", oa.OrgID(), err)
+	}
+
+	channels, err := calculateChannelCounts(ctx, rt, oa.Org())
+	if err != nil {
+		return fmt.Errorf("error calculating channel counts for org: %d: %w", oa.OrgID(), err)
 	}
 
 	rawW.WriteHeader(http.StatusOK)

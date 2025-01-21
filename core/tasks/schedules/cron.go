@@ -11,7 +11,6 @@ import (
 	"github.com/nyaruka/mailroom/core/tasks/msgs"
 	"github.com/nyaruka/mailroom/core/tasks/starts"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/nyaruka/mailroom/utils/queues"
 )
 
 func init() {
@@ -135,7 +134,7 @@ func (c *schedulesCron) Run(ctx context.Context, rt *runtime.Runtime) (map[strin
 
 		// add our task if we have one
 		if task != nil {
-			err = tasks.Queue(rc, tasks.BatchQueue, s.OrgID, task, queues.HighPriority)
+			err = tasks.Queue(rc, tasks.BatchQueue, s.OrgID, task, true)
 			if err != nil {
 				log.Error(fmt.Sprintf("error queueing %s task from schedule", task.Type()), "error", err)
 			}

@@ -35,13 +35,13 @@ func handleWebhookCalled(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, 
 	}
 
 	run, step := scene.Session().FindStep(e.StepUUID())
-	flow, _ := oa.FlowByUUID(run.FlowReference().UUID)
+	flow := run.Flow().Asset().(*models.Flow)
 
 	// create an HTTP log
 	if flow != nil {
 		httpLog := models.NewWebhookCalledLog(
 			oa.OrgID(),
-			flow.(*models.Flow).ID(),
+			flow.ID(),
 			event.URL, event.StatusCode, event.Request, event.Response,
 			event.Status != flows.CallStatusSuccess,
 			time.Millisecond*time.Duration(event.ElapsedMS),

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/buger/jsonparser"
-	"github.com/jmoiron/sqlx"
 	"github.com/nyaruka/gocommon/stringsx"
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/mailroom/runtime"
@@ -16,68 +15,94 @@ import (
 const (
 	recentContactsCap    = 5              // number of recent contacts we keep per segment
 	recentContactsExpire = time.Hour * 24 // how long we keep recent contacts
-	recentContactsKey    = "recent_contacts:%s"
+	recentContactsKey    = "recent_contacts:%s:%s"
 )
 
 var storeOperandsForTypes = map[string]bool{"wait_for_response": true, "split_by_expression": true, "split_by_contact_field": true, "split_by_run_result": true}
 
-type segmentID struct {
+const sqlInsertFlowActivityCount = `
+INSERT INTO flows_flowactivitycount( flow_id,  scope,  count,  is_squashed)
+                             VALUES(:flow_id, :scope, :count,        FALSE)
+`
+
+type FlowActivityCount struct {
+	FlowID FlowID `db:"flow_id"`
+	Scope  string `db:"scope"`
+	Count  int    `db:"count"`
+}
+
+// InsertFlowActivityCounts inserts the given flow activity counts into the database
+func InsertFlowActivityCounts(ctx context.Context, db DBorTx, counts []*FlowActivityCount) error {
+	return BulkQuery(ctx, "insert flow activity counts", db, sqlInsertFlowActivityCount, counts)
+}
+
+type segmentInfo struct {
+	flowID   FlowID
 	exitUUID flows.ExitUUID
 	destUUID flows.NodeUUID
 }
 
-func (s segmentID) String() string {
-	return fmt.Sprintf("%s:%s", s.exitUUID, s.destUUID)
-}
-
-type segmentContact struct {
+type segmentRecentContact struct {
 	contact *flows.Contact
 	operand string
 	time    time.Time
+	rnd     string
 }
 
 // RecordFlowStatistics records statistics from the given parallel slices of sessions and sprints
-func RecordFlowStatistics(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, sessions []flows.Session, sprints []flows.Sprint) error {
-	rc := rt.RP.Get()
-	defer rc.Close()
-
-	segmentIDs := make([]segmentID, 0, 10)
-	recentBySegment := make(map[segmentID][]*segmentContact, 10)
+func RecordFlowStatistics(ctx context.Context, rt *runtime.Runtime, db DBorTx, sessions []flows.Session, sprints []flows.Sprint) error {
+	countsBySegment := make(map[segmentInfo]int, 10)
+	recentBySegment := make(map[segmentInfo][]*segmentRecentContact, 10)
 	nodeTypeCache := make(map[flows.NodeUUID]string)
 
 	for i, sprint := range sprints {
 		session := sessions[i]
 
 		for _, seg := range sprint.Segments() {
-			segID := segmentID{seg.Exit().UUID(), seg.Destination().UUID()}
-			uiNodeType := getNodeUIType(seg.Flow(), seg.Node(), nodeTypeCache)
-
-			// only store operand values for certain node types
-			operand := ""
-			if storeOperandsForTypes[uiNodeType] {
-				operand = seg.Operand()
+			segID := segmentInfo{
+				flowID:   seg.Flow().Asset().(*Flow).ID(),
+				exitUUID: seg.Exit().UUID(),
+				destUUID: seg.Destination().UUID(),
 			}
 
-			if _, seen := recentBySegment[segID]; !seen {
-				segmentIDs = append(segmentIDs, segID)
+			countsBySegment[segID]++
+
+			// only store recent contact if we have less than the cap
+			if len(recentBySegment[segID]) < recentContactsCap {
+				uiNodeType := getNodeUIType(seg.Flow(), seg.Node(), nodeTypeCache)
+
+				// only store operand values for certain node types
+				operand := ""
+				if storeOperandsForTypes[uiNodeType] {
+					operand = seg.Operand()
+				}
+				recentBySegment[segID] = append(recentBySegment[segID], &segmentRecentContact{contact: session.Contact(), operand: operand, time: seg.Time(), rnd: redisx.RandomBase64(10)})
 			}
-			recentBySegment[segID] = append(recentBySegment[segID], &segmentContact{contact: session.Contact(), operand: operand, time: seg.Time()})
 		}
 	}
 
-	for _, segID := range segmentIDs {
-		recentContacts := recentBySegment[segID]
+	counts := make([]*FlowActivityCount, 0, len(countsBySegment))
+	for segID, count := range countsBySegment {
+		counts = append(counts, &FlowActivityCount{
+			FlowID: segID.flowID,
+			Scope:  fmt.Sprintf("segment:%s:%s", segID.exitUUID, segID.destUUID),
+			Count:  count,
+		})
+	}
 
-		// trim recent set for each segment - no point in trying to add more values than we keep
-		if len(recentContacts) > recentContactsCap {
-			recentBySegment[segID] = recentContacts[:len(recentContacts)-recentContactsCap]
-		}
+	if err := InsertFlowActivityCounts(ctx, db, counts); err != nil {
+		return fmt.Errorf("error inserting flow segment counts: %w", err)
+	}
 
-		recentSet := redisx.NewCappedZSet(fmt.Sprintf(recentContactsKey, segID), recentContactsCap, recentContactsExpire)
+	rc := rt.RP.Get()
+	defer rc.Close()
+
+	for segID, recentContacts := range recentBySegment {
+		recentSet := redisx.NewCappedZSet(fmt.Sprintf(recentContactsKey, segID.exitUUID, segID.destUUID), recentContactsCap, recentContactsExpire)
 
 		for _, recent := range recentContacts {
 			// set members need to be unique, so we include a random string
-			value := fmt.Sprintf("%s|%d|%s", redisx.RandomBase64(10), recent.contact.ID(), stringsx.TruncateEllipsis(recent.operand, 100))
+			value := fmt.Sprintf("%s|%d|%s", recent.rnd, recent.contact.ID(), stringsx.TruncateEllipsis(recent.operand, 100))
 			score := float64(recent.time.UnixNano()) / float64(1e9) // score is UNIX time as floating point
 
 			err := recentSet.Add(rc, value, score)

@@ -3,20 +3,27 @@ package testsuite
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/gomodule/redigo/redis"
 	"github.com/jmoiron/sqlx"
-	"github.com/nyaruka/gocommon/storage"
+	"github.com/nyaruka/gocommon/aws/cwatch"
+	"github.com/nyaruka/gocommon/aws/dynamo"
+	"github.com/nyaruka/gocommon/aws/s3x"
+	"github.com/nyaruka/gocommon/jsonx"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/redisx/assertredis"
 	"github.com/nyaruka/rp-indexer/v9/indexers"
-	"golang.org/x/exp/maps"
+	ixruntime "github.com/nyaruka/rp-indexer/v9/runtime"
 )
 
 var _db *sqlx.DB
@@ -24,10 +31,6 @@ var _db *sqlx.DB
 const elasticURL = "http://localhost:9200"
 const elasticContactsIndex = "test_contacts"
 const postgresContainerName = "textit-postgres-1"
-
-const attachmentStorageDir = "_test_attachments_storage"
-const sessionStorageDir = "_test_session_storage"
-const logStorageDir = "_test_log_storage"
 
 // Refresh is our type for the pieces of org assets we want fresh (not cached)
 type ResetFlag int
@@ -40,11 +43,12 @@ const (
 	ResetRedis   = ResetFlag(1 << 3)
 	ResetStorage = ResetFlag(1 << 4)
 	ResetElastic = ResetFlag(1 << 5)
+	ResetDynamo  = ResetFlag(1 << 6)
 )
 
 // Reset clears out both our database and redis DB
 func Reset(what ResetFlag) {
-	ctx := context.TODO()
+	ctx, rt := Runtime() // TODO pass rt from test?
 
 	if what&ResetDB > 0 {
 		resetDB()
@@ -55,10 +59,13 @@ func Reset(what ResetFlag) {
 		resetRedis()
 	}
 	if what&ResetStorage > 0 {
-		resetStorage()
+		resetStorage(ctx, rt)
 	}
 	if what&ResetElastic > 0 {
-		resetElastic(ctx)
+		resetElastic(ctx, rt)
+	}
+	if what&ResetDynamo > 0 {
+		resetDynamo(ctx, rt)
 	}
 
 	models.FlushCache()
@@ -67,20 +74,39 @@ func Reset(what ResetFlag) {
 // Runtime returns the various runtime things a test might need
 func Runtime() (context.Context, *runtime.Runtime) {
 	cfg := runtime.NewDefaultConfig()
-	cfg.ElasticContactsIndex = elasticContactsIndex
+	cfg.DeploymentID = "test"
 	cfg.Port = 8091
+	cfg.ElasticContactsIndex = elasticContactsIndex
+	cfg.AWSAccessKeyID = "root"
+	cfg.AWSSecretAccessKey = "tembatemba"
+	cfg.S3Endpoint = "http://localhost:9000"
+	cfg.S3AttachmentsBucket = "test-attachments"
+	cfg.S3SessionsBucket = "test-sessions"
+	cfg.S3Minio = true
+	cfg.DynamoEndpoint = "http://localhost:6000"
+	cfg.DynamoTablePrefix = "Test"
+
+	dyna, err := dynamo.NewService(cfg.AWSAccessKeyID, cfg.AWSSecretAccessKey, cfg.AWSRegion, cfg.DynamoEndpoint, cfg.DynamoTablePrefix)
+	noError(err)
+
+	s3svc, err := s3x.NewService(cfg.AWSAccessKeyID, cfg.AWSSecretAccessKey, cfg.AWSRegion, cfg.S3Endpoint, cfg.S3Minio)
+	noError(err)
+
+	cwSvc, err := cwatch.NewService(cfg.AWSAccessKeyID, cfg.AWSSecretAccessKey, cfg.AWSRegion, cfg.CloudwatchNamespace, cfg.DeploymentID)
+	noError(err)
 
 	dbx := getDB()
 	rt := &runtime.Runtime{
-		DB:                dbx,
-		ReadonlyDB:        dbx.DB,
-		RP:                getRP(),
-		ES:                getES(),
-		FCM:               &MockFCMClient{ValidTokens: []string{"FCMID3", "FCMID4", "FCMID5"}},
-		AttachmentStorage: storage.NewFS(attachmentStorageDir, 0766),
-		SessionStorage:    storage.NewFS(sessionStorageDir, 0766),
-		LogStorage:        storage.NewFS(logStorageDir, 0766),
-		Config:            cfg,
+		DB:         dbx,
+		ReadonlyDB: dbx.DB,
+		RP:         getRP(),
+		Dynamo:     dyna,
+		S3:         s3svc,
+		ES:         getES(),
+		CW:         cwSvc,
+		Stats:      runtime.NewStatsCollector(),
+		FCM:        &MockFCMClient{ValidTokens: []string{"FCMID3", "FCMID4", "FCMID5"}},
+		Config:     cfg,
 	}
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
@@ -94,7 +120,7 @@ func ReindexElastic(ctx context.Context) {
 	es := getES()
 
 	contactsIndexer := indexers.NewContactIndexer(elasticURL, elasticContactsIndex, 1, 1, 100)
-	contactsIndexer.Index(db.DB, false, false)
+	contactsIndexer.Index(&ixruntime.Runtime{DB: db.DB}, false, false)
 
 	_, err := es.Indices.Refresh().Index(elasticContactsIndex).Do(ctx)
 	noError(err)
@@ -153,7 +179,7 @@ func resetDB() {
 }
 
 func loadTestDump() {
-	dump, err := os.Open(absPath("./mailroom_test.dump"))
+	dump, err := os.Open(absPath("./testsuite/testfiles/postgres.dump"))
 	must(err)
 	defer dump.Close()
 
@@ -191,33 +217,54 @@ func resetRedis() {
 	assertredis.FlushDB()
 }
 
-// clears our storage for tests
-func resetStorage() {
-	must(os.RemoveAll(attachmentStorageDir))
-	must(os.RemoveAll(sessionStorageDir))
-	must(os.RemoveAll(logStorageDir))
+func resetStorage(ctx context.Context, rt *runtime.Runtime) {
+	rt.S3.EmptyBucket(ctx, rt.Config.S3AttachmentsBucket)
+	rt.S3.EmptyBucket(ctx, rt.Config.S3SessionsBucket)
 }
 
 // clears indexed data in Elastic
-func resetElastic(ctx context.Context) {
-	es := getES()
-
-	exists, err := es.Indices.ExistsAlias(elasticContactsIndex).Do(ctx)
+func resetElastic(ctx context.Context, rt *runtime.Runtime) {
+	exists, err := rt.ES.Indices.ExistsAlias(elasticContactsIndex).Do(ctx)
 	noError(err)
 
 	if exists {
 		// get any indexes for the contacts alias
-		ar, err := es.Indices.GetAlias().Name(elasticContactsIndex).Do(ctx)
+		ar, err := rt.ES.Indices.GetAlias().Name(elasticContactsIndex).Do(ctx)
 		noError(err)
 
 		// and delete them
-		for _, index := range maps.Keys(ar) {
-			_, err := es.Indices.Delete(index).Do(ctx)
+		for index := range maps.Keys(ar) {
+			_, err := rt.ES.Indices.Delete(index).Do(ctx)
 			noError(err)
 		}
 	}
 
 	ReindexElastic(ctx)
+}
+
+func resetDynamo(ctx context.Context, rt *runtime.Runtime) {
+	tablesFile, err := os.Open(absPath("./testsuite/testfiles/dynamo.json"))
+	must(err)
+	defer tablesFile.Close()
+
+	tablesJSON, err := io.ReadAll(tablesFile)
+	must(err)
+
+	inputs := []*dynamodb.CreateTableInput{}
+	jsonx.MustUnmarshal(tablesJSON, &inputs)
+
+	for _, input := range inputs {
+		input.TableName = aws.String(rt.Dynamo.TableName(*input.TableName))
+
+		// delete table if it exists
+		if _, err := rt.Dynamo.Client.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: input.TableName}); err == nil {
+			_, err := rt.Dynamo.Client.DeleteTable(ctx, &dynamodb.DeleteTableInput{TableName: input.TableName})
+			must(err)
+		}
+
+		_, err := rt.Dynamo.Client.CreateTable(ctx, input)
+		must(err)
+	}
 }
 
 var sqlResetTestData = `
@@ -238,12 +285,12 @@ DELETE FROM triggers_trigger WHERE id >= 30000;
 DELETE FROM channels_channel WHERE id >= 30000;
 DELETE FROM channels_channelcount;
 DELETE FROM channels_channelevent;
+DELETE FROM channels_channellog;
 DELETE FROM msgs_msg;
 DELETE FROM flows_flowrun;
-DELETE FROM flows_flowpathcount;
-DELETE FROM flows_flownodecount;
-DELETE FROM flows_flowrunstatuscount;
 DELETE FROM flows_flowcategorycount;
+DELETE FROM flows_flowactivitycount;
+DELETE FROM flows_flowstartcount;
 DELETE FROM flows_flowstart_contacts;
 DELETE FROM flows_flowstart_groups;
 DELETE FROM flows_flowstart;
@@ -271,6 +318,7 @@ DELETE FROM contacts_contactgroup_contacts WHERE contact_id >= 30000 OR contactg
 DELETE FROM contacts_contact WHERE id >= 30000;
 DELETE FROM contacts_contactgroupcount WHERE group_id >= 30000;
 DELETE FROM contacts_contactgroup WHERE id >= 30000;
+DELETE FROM orgs_itemcount;
 
 ALTER SEQUENCE flows_flow_id_seq RESTART WITH 30000;
 ALTER SEQUENCE tickets_ticket_id_seq RESTART WITH 1;

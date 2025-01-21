@@ -77,8 +77,7 @@ SELECT ROW_TO_JSON(r) FROM (
            SELECT u.id, u.email, u.first_name, u.last_name, m.role_code, row_to_json(team_struct) AS team
              FROM orgs_orgmembership m
        INNER JOIN auth_user u ON u.id = m.user_id
-        LEFT JOIN orgs_usersettings s ON s.user_id = u.id 
-LEFT JOIN LATERAL (SELECT id, uuid, name FROM tickets_team WHERE tickets_team.id = s.team_id) AS team_struct ON True
+LEFT JOIN LATERAL (SELECT id, uuid, name FROM tickets_team WHERE tickets_team.id = m.team_id) AS team_struct ON True
             WHERE m.org_id = $1 AND u.is_active = TRUE
          ORDER BY u.email ASC
 ) r;`

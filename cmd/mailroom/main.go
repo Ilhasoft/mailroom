@@ -15,11 +15,10 @@ import (
 	"github.com/nyaruka/mailroom"
 	"github.com/nyaruka/mailroom/runtime"
 	slogmulti "github.com/samber/slog-multi"
-	slogsentry "github.com/samber/slog-sentry"
+	slogsentry "github.com/samber/slog-sentry/v2"
 
 	_ "github.com/nyaruka/mailroom/core/handlers"
 	_ "github.com/nyaruka/mailroom/core/hooks"
-	_ "github.com/nyaruka/mailroom/core/tasks/analytics"
 	_ "github.com/nyaruka/mailroom/core/tasks/campaigns"
 	_ "github.com/nyaruka/mailroom/core/tasks/contacts"
 	_ "github.com/nyaruka/mailroom/core/tasks/expirations"
@@ -62,7 +61,7 @@ func main() {
 
 	// if we have a DSN entry, try to initialize it
 	if config.SentryDSN != "" {
-		err := sentry.Init(sentry.ClientOptions{Dsn: config.SentryDSN, EnableTracing: false})
+		err := sentry.Init(sentry.ClientOptions{Dsn: config.SentryDSN, AttachStacktrace: true})
 		if err != nil {
 			ulog.Fatalf("error initiating sentry client, error %s, dsn %s", err, config.SentryDSN)
 		}
@@ -81,7 +80,7 @@ func main() {
 	log.Info("starting mailroom", "version", version, "released", date)
 
 	if config.UUIDSeed != 0 {
-		uuids.SetGenerator(uuids.NewSeededGenerator(int64(config.UUIDSeed)))
+		uuids.SetGenerator(uuids.NewSeededGenerator(int64(config.UUIDSeed), time.Now))
 		log.Warn("using seeded UUID generation", "uuid-seed", config.UUIDSeed)
 	}
 

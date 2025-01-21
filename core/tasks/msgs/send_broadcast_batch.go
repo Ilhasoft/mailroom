@@ -3,7 +3,6 @@ package msgs
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/nyaruka/mailroom/core/models"
@@ -37,22 +36,45 @@ func (t *SendBroadcastBatchTask) WithAssets() models.Refresh {
 }
 
 func (t *SendBroadcastBatchTask) Perform(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets) error {
-	// always set our broadcast as sent if it is our last
-	defer func() {
-		if t.BroadcastBatch.IsLast && t.BroadcastBatch.BroadcastID != models.NilBroadcastID {
-			err := models.MarkBroadcastSent(ctx, rt.DB, t.BroadcastBatch.BroadcastID)
-			if err != nil {
-				slog.Error("error marking broadcast as sent", "error", err)
-			}
+	var bcast *models.Broadcast
+	var err error
+
+	// if this batch belongs to a persisted broadcast, fetch it
+	if t.BroadcastID != models.NilBroadcastID {
+		bcast, err = models.GetBroadcastByID(ctx, rt.DB, t.BroadcastID)
+		if err != nil {
+			return fmt.Errorf("error loading flow start for batch: %w", err)
 		}
-	}()
+	} else {
+		bcast = t.Broadcast // otherwise use broadcast from the task
+	}
+
+	// if this broadcast was interrupted, we're done
+	if bcast.Status == models.BroadcastStatusInterrupted {
+		return nil
+	}
+
+	// if this is our first batch, mark as started
+	if t.IsFirst {
+		if err := bcast.SetStarted(ctx, rt.DB); err != nil {
+			return fmt.Errorf("error marking broadcast as started: %w", err)
+		}
+	}
 
 	// create this batch of messages
-	msgs, err := t.BroadcastBatch.CreateMessages(ctx, rt, oa)
+	msgs, err := bcast.CreateMessages(ctx, rt, oa, t.BroadcastBatch)
 	if err != nil {
 		return fmt.Errorf("error creating broadcast messages: %w", err)
 	}
 
 	msgio.QueueMessages(ctx, rt, rt.DB, msgs)
+
+	// if this is our last batch, mark broadcast as done
+	if t.IsLast {
+		if err := bcast.SetCompleted(ctx, rt.DB); err != nil {
+			return fmt.Errorf("error marking broadcast as complete: %w", err)
+		}
+	}
+
 	return nil
 }

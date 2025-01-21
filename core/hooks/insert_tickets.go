@@ -10,6 +10,11 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+type TicketAndNote struct {
+	Ticket *models.Ticket
+	Note   string
+}
+
 // InsertTicketsHook is our hook for inserting tickets
 var InsertTicketsHook models.EventCommitHook = &insertTicketsHook{}
 
@@ -17,12 +22,15 @@ type insertTicketsHook struct{}
 
 // Apply inserts all the airtime transfers that were created
 func (h *insertTicketsHook) Apply(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *models.OrgAssets, scenes map[*models.Scene][]any) error {
-	// gather all our tickets
+	// gather all our tickets and notes
 	tickets := make([]*models.Ticket, 0, len(scenes))
+	notes := make(map[*models.Ticket]string, len(scenes))
 
 	for _, ts := range scenes {
 		for _, t := range ts {
-			tickets = append(tickets, t.(*models.Ticket))
+			open := t.(TicketAndNote)
+			tickets = append(tickets, open.Ticket)
+			notes[open.Ticket] = open.Note
 		}
 	}
 
@@ -36,7 +44,7 @@ func (h *insertTicketsHook) Apply(ctx context.Context, rt *runtime.Runtime, tx *
 	openEvents := make([]*models.TicketEvent, len(tickets))
 	eventsByTicket := make(map[*models.Ticket]*models.TicketEvent, len(tickets))
 	for i, ticket := range tickets {
-		evt := models.NewTicketOpenedEvent(ticket, ticket.OpenedByID(), ticket.AssigneeID())
+		evt := models.NewTicketOpenedEvent(ticket, ticket.OpenedByID(), ticket.AssigneeID(), notes[ticket])
 		openEvents[i] = evt
 		eventsByTicket[ticket] = evt
 	}

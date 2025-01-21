@@ -11,7 +11,7 @@
                 {
                     "uuid": "82a1de5f-af1a-45ef-8511-4d60c160e486",
                     "type": "send_msg",
-                    "text": "Hello @webhook",
+                    "text": "Hello @webhook from @results.this_is_a_reference_to_a_result_whose_name_will_have_been_truncated",
                     "templating": {
                         "uuid": "1ae96956-4b34-433e-8d1a-f05fe6923d6d",
                         "template": {

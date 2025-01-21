@@ -21,6 +21,7 @@ import (
 	"github.com/nyaruka/goflow/utils"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
+	"github.com/nyaruka/mailroom/utils/clogs"
 )
 
 var courierHttpClient = &http.Client{
@@ -311,11 +312,11 @@ type fetchAttachmentResponse struct {
 		URL         string `json:"url"`
 		Size        int    `json:"size"`
 	} `json:"attachment"`
-	LogUUID string `json:"log_uuid"`
+	LogUUID clogs.LogUUID `json:"log_uuid"`
 }
 
 // FetchAttachment calls courier to fetch the given attachment
-func FetchAttachment(ctx context.Context, rt *runtime.Runtime, ch *models.Channel, attURL string, msgID models.MsgID) (utils.Attachment, models.ChannelLogUUID, error) {
+func FetchAttachment(ctx context.Context, rt *runtime.Runtime, ch *models.Channel, attURL string, msgID models.MsgID) (utils.Attachment, clogs.LogUUID, error) {
 	payload := jsonx.MustMarshal(&fetchAttachmentRequest{
 		ChannelType: ch.Type(),
 		ChannelUUID: ch.UUID(),
@@ -337,5 +338,5 @@ func FetchAttachment(ctx context.Context, rt *runtime.Runtime, ch *models.Channe
 		return "", "", fmt.Errorf("error unmarshaling courier response: %w", err)
 	}
 
-	return utils.Attachment(fmt.Sprintf("%s:%s", fa.Attachment.ContentType, fa.Attachment.URL)), models.ChannelLogUUID(fa.LogUUID), nil
+	return utils.Attachment(fmt.Sprintf("%s:%s", fa.Attachment.ContentType, fa.Attachment.URL)), fa.LogUUID, nil
 }

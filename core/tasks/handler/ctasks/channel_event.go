@@ -192,7 +192,7 @@ func (t *ChannelEventTask) handle(ctx context.Context, rt *runtime.Runtime, oa *
 		}
 	}
 
-	sessions, err := runner.StartFlowForContacts(ctx, rt, oa, flow, []*models.Contact{contact}, []flows.Trigger{trig}, hook, flow.FlowType().Interrupts())
+	sessions, err := runner.StartFlowForContacts(ctx, rt, oa, flow, []*models.Contact{contact}, []flows.Trigger{trig}, hook, flow.FlowType().Interrupts(), models.NilStartID)
 	if err != nil {
 		return nil, fmt.Errorf("error starting flow for contact: %w", err)
 	}

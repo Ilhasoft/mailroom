@@ -3,13 +3,14 @@ package ticket
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/mailroom/web"
-	"golang.org/x/exp/maps"
 )
 
 func init() {
@@ -67,12 +68,12 @@ func handleReopen(ctx context.Context, rt *runtime.Runtime, r *http.Request) (an
 }
 
 func tryToLockAndReopen(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, tickets map[models.ContactID]*models.Ticket, userID models.UserID) (map[*models.Ticket]*models.TicketEvent, map[models.ContactID]*models.Ticket, error) {
-	locks, skipped, err := models.LockContacts(ctx, rt, oa.OrgID(), maps.Keys(tickets), time.Second)
+	locks, skipped, err := models.LockContacts(ctx, rt, oa.OrgID(), slices.Collect(maps.Keys(tickets)), time.Second)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	locked := maps.Keys(locks)
+	locked := slices.Collect(maps.Keys(locks))
 
 	defer models.UnlockContacts(rt, oa.OrgID(), locks)
 

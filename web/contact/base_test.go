@@ -30,6 +30,14 @@ func TestCreate(t *testing.T) {
 	testsuite.RunWebTests(t, ctx, rt, "testdata/create.json", nil)
 }
 
+func TestDeindex(t *testing.T) {
+	ctx, rt := testsuite.Runtime()
+
+	defer testsuite.Reset(testsuite.ResetElastic)
+
+	testsuite.RunWebTests(t, ctx, rt, "testdata/deindex.json", nil)
+}
+
 func TestExport(t *testing.T) {
 	ctx, rt := testsuite.Runtime()
 

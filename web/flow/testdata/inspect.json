@@ -71,7 +71,6 @@
             ],
             "issues": [],
             "results": [],
-            "waiting_exits": [],
             "parent_refs": []
         }
     },
@@ -168,7 +167,6 @@
                 }
             ],
             "results": [],
-            "waiting_exits": [],
             "parent_refs": []
         }
     },
@@ -241,7 +239,6 @@
                     ]
                 }
             ],
-            "waiting_exits": [],
             "parent_refs": []
         }
     },
@@ -336,7 +333,6 @@
             "dependencies": [],
             "issues": [],
             "results": [],
-            "waiting_exits": [],
             "parent_refs": []
         }
     },
@@ -350,7 +346,7 @@
             "flow": {
                 "uuid": "8f107d42-7416-4cf2-9a51-9490361ad517",
                 "name": "Invalid Flow",
-                "spec_version": "13.5.0",
+                "spec_version": "13.6.0",
                 "language": "base",
                 "type": "messaging",
                 "revision": 1,

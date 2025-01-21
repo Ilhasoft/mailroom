@@ -9,11 +9,12 @@ import (
 	"time"
 
 	"github.com/appleboy/go-fcm"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/jmoiron/sqlx"
-	"github.com/nyaruka/gocommon/analytics"
-	"github.com/nyaruka/gocommon/storage"
+	"github.com/nyaruka/gocommon/aws/cwatch"
+	"github.com/nyaruka/gocommon/aws/dynamo"
+	"github.com/nyaruka/gocommon/aws/s3x"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/mailroom/web"
@@ -29,22 +30,30 @@ type Mailroom struct {
 	wg   *sync.WaitGroup
 	quit chan bool
 
-	batchForeman   *Foreman
-	handlerForeman *Foreman
+	handlerForeman   *Foreman
+	batchForeman     *Foreman
+	throttledForeman *Foreman
 
 	webserver *web.Server
+
+	// both sqlx and redis provide wait stats which are cummulative that we need to convert into increments by
+	// tracking their previous values
+	dbWaitDuration    time.Duration
+	redisWaitDuration time.Duration
 }
 
 // NewMailroom creates and returns a new mailroom instance
 func NewMailroom(config *runtime.Config) *Mailroom {
 	mr := &Mailroom{
-		rt:   &runtime.Runtime{Config: config},
+		rt:   &runtime.Runtime{Config: config, Stats: runtime.NewStatsCollector()},
 		quit: make(chan bool),
 		wg:   &sync.WaitGroup{},
 	}
 	mr.ctx, mr.cancel = context.WithCancel(context.Background())
-	mr.batchForeman = NewForeman(mr.rt, mr.wg, tasks.BatchQueue, config.BatchWorkers)
+
 	mr.handlerForeman = NewForeman(mr.rt, mr.wg, tasks.HandlerQueue, config.HandlerWorkers)
+	mr.batchForeman = NewForeman(mr.rt, mr.wg, tasks.BatchQueue, config.BatchWorkers)
+	mr.throttledForeman = NewForeman(mr.rt, mr.wg, tasks.ThrottledQueue, config.BatchWorkers)
 
 	return mr
 }
@@ -92,47 +101,33 @@ func (mr *Mailroom) Start() error {
 		log.Warn("fcm not configured, no android syncing")
 	}
 
-	// create our storage (S3 or file system)
-	if mr.rt.Config.AWSAccessKeyID != "" || mr.rt.Config.AWSUseCredChain {
-		s3config := &storage.S3Options{
-			Endpoint:       c.S3Endpoint,
-			Region:         c.S3Region,
-			DisableSSL:     c.S3DisableSSL,
-			ForcePathStyle: c.S3ForcePathStyle,
-			MaxRetries:     3,
-		}
-		if mr.rt.Config.AWSAccessKeyID != "" && !mr.rt.Config.AWSUseCredChain {
-			s3config.AWSAccessKeyID = c.AWSAccessKeyID
-			s3config.AWSSecretAccessKey = c.AWSSecretAccessKey
-		}
-		s3Client, err := storage.NewS3Client(s3config)
-		if err != nil {
-			return err
-		}
-		mr.rt.AttachmentStorage = storage.NewS3(s3Client, mr.rt.Config.S3AttachmentsBucket, c.S3Region, s3.BucketCannedACLPublicRead, 32)
-		mr.rt.SessionStorage = storage.NewS3(s3Client, mr.rt.Config.S3SessionsBucket, c.S3Region, s3.ObjectCannedACLPrivate, 32)
-		mr.rt.LogStorage = storage.NewS3(s3Client, mr.rt.Config.S3LogsBucket, c.S3Region, s3.ObjectCannedACLPrivate, 32)
+	// setup DynamoDB
+	mr.rt.Dynamo, err = dynamo.NewService(c.AWSAccessKeyID, c.AWSSecretAccessKey, c.AWSRegion, c.DynamoEndpoint, c.DynamoTablePrefix)
+	if err != nil {
+		return err
+	}
+	if err := mr.rt.Dynamo.Test(mr.ctx); err != nil {
+		log.Error("dynamodb not reachable", "error", err)
 	} else {
-		mr.rt.AttachmentStorage = storage.NewFS("_storage/attachments", 0766)
-		mr.rt.SessionStorage = storage.NewFS("_storage/sessions", 0766)
-		mr.rt.LogStorage = storage.NewFS("_storage/logs", 0766)
+		log.Info("dynamodb ok")
 	}
 
-	// check our storages
-	if err := checkStorage(mr.rt.AttachmentStorage); err != nil {
-		log.Error(mr.rt.AttachmentStorage.Name()+" attachment storage not available", "error", err)
-	} else {
-		log.Info(mr.rt.AttachmentStorage.Name() + " attachment storage ok")
+	// setup S3 storage
+	mr.rt.S3, err = s3x.NewService(c.AWSAccessKeyID, c.AWSSecretAccessKey, c.AWSRegion, c.S3Endpoint, c.S3Minio)
+	if err != nil {
+		return err
 	}
-	if err := checkStorage(mr.rt.SessionStorage); err != nil {
-		log.Error(mr.rt.SessionStorage.Name()+" session storage not available", "error", err)
+
+	// check buckets
+	if err := mr.rt.S3.Test(mr.ctx, c.S3AttachmentsBucket); err != nil {
+		log.Error("attachments bucket not accessible", "error", err)
 	} else {
-		log.Info(mr.rt.SessionStorage.Name() + " session storage ok")
+		log.Info("attachments bucket ok")
 	}
-	if err := checkStorage(mr.rt.LogStorage); err != nil {
-		log.Error(mr.rt.LogStorage.Name()+" log storage not available", "error", err)
+	if err := mr.rt.S3.Test(mr.ctx, c.S3SessionsBucket); err != nil {
+		log.Error("sessions bucket not accessible", "error", err)
 	} else {
-		log.Info(mr.rt.LogStorage.Name() + " log storage ok")
+		log.Info("sessions bucket ok")
 	}
 
 	// initialize our elastic client
@@ -143,16 +138,18 @@ func (mr *Mailroom) Start() error {
 		log.Info("elastic ok")
 	}
 
-	// if we have a librato token, configure it
-	if c.LibratoToken != "" {
-		analytics.RegisterBackend(analytics.NewLibrato(c.LibratoUsername, c.LibratoToken, c.InstanceID, time.Second, mr.wg))
+	// configure and start cloudwatch
+	mr.rt.CW, err = cwatch.NewService(c.AWSAccessKeyID, c.AWSSecretAccessKey, c.AWSRegion, c.CloudwatchNamespace, c.DeploymentID)
+	if err != nil {
+		log.Error("cloudwatch not available", "error", err)
+	} else {
+		log.Info("cloudwatch ok")
 	}
 
-	analytics.Start()
-
 	// init our foremen and start it
-	mr.batchForeman.Start()
 	mr.handlerForeman.Start()
+	mr.batchForeman.Start()
+	mr.throttledForeman.Start()
 
 	// start our web server
 	mr.webserver = web.NewServer(mr.ctx, mr.rt, mr.wg)
@@ -160,9 +157,74 @@ func (mr *Mailroom) Start() error {
 
 	tasks.StartCrons(mr.rt, mr.wg, mr.quit)
 
+	mr.startMetricsReporter(time.Minute)
+
 	log.Info("mailroom started", "domain", c.Domain)
 
 	return nil
+}
+
+func (mr *Mailroom) startMetricsReporter(interval time.Duration) {
+	mr.wg.Add(1)
+
+	report := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+		count, err := mr.reportMetrics(ctx)
+		cancel()
+		if err != nil {
+			slog.Error("error reporting metrics", "error", err)
+		} else {
+			slog.Info("sent metrics to cloudwatch", "count", count)
+		}
+	}
+
+	go func() {
+		defer func() {
+			slog.Info("metrics reporter exiting")
+			mr.wg.Done()
+		}()
+
+		for {
+			select {
+			case <-mr.quit:
+				report()
+				return
+			case <-time.After(interval): // TODO align to half minute marks for queue sizes?
+				report()
+			}
+		}
+	}()
+}
+
+func (mr *Mailroom) reportMetrics(ctx context.Context) (int, error) {
+	metrics := mr.rt.Stats.Extract().ToMetrics()
+
+	handlerSize, batchSize, throttledSize := getQueueSizes(mr.rt)
+
+	// calculate DB and redis stats
+	dbStats := mr.rt.DB.Stats()
+	redisStats := mr.rt.RP.Stats()
+	dbWaitDurationInPeriod := dbStats.WaitDuration - mr.dbWaitDuration
+	redisWaitDurationInPeriod := redisStats.WaitDuration - mr.redisWaitDuration
+	mr.dbWaitDuration = dbStats.WaitDuration
+	mr.redisWaitDuration = redisStats.WaitDuration
+
+	hostDim := cwatch.Dimension("Host", mr.rt.Config.InstanceID)
+	metrics = append(metrics,
+		cwatch.Datum("DBConnectionsInUse", float64(dbStats.InUse), types.StandardUnitCount, hostDim),
+		cwatch.Datum("DBConnectionWaitDuration", float64(dbWaitDurationInPeriod)/float64(time.Second), types.StandardUnitSeconds, hostDim),
+		cwatch.Datum("RedisConnectionsInUse", float64(redisStats.ActiveCount), types.StandardUnitCount, hostDim),
+		cwatch.Datum("RedisConnectionsWaitDuration", float64(redisWaitDurationInPeriod)/float64(time.Second), types.StandardUnitSeconds, hostDim),
+		cwatch.Datum("QueuedTasks", float64(handlerSize), types.StandardUnitCount, cwatch.Dimension("QueueName", "handler")),
+		cwatch.Datum("QueuedTasks", float64(batchSize), types.StandardUnitCount, cwatch.Dimension("QueueName", "batch")),
+		cwatch.Datum("QueuedTasks", float64(throttledSize), types.StandardUnitCount, cwatch.Dimension("QueueName", "throttled")),
+	)
+
+	if err := mr.rt.CW.Send(ctx, metrics...); err != nil {
+		return 0, fmt.Errorf("error sending metrics: %w", err)
+	}
+
+	return len(metrics), nil
 }
 
 // Stop stops the mailroom service
@@ -170,13 +232,13 @@ func (mr *Mailroom) Stop() error {
 	log := slog.With("comp", "mailroom")
 	log.Info("mailroom stopping")
 
-	mr.batchForeman.Stop()
 	mr.handlerForeman.Stop()
-	analytics.Stop()
-	close(mr.quit)
+	mr.batchForeman.Stop()
+	mr.throttledForeman.Stop()
+
+	close(mr.quit) // tell workers and crons to stop
 	mr.cancel()
 
-	// stop our web server
 	mr.webserver.Stop()
 
 	mr.wg.Wait()
@@ -204,9 +266,22 @@ func openAndCheckDBConnection(url string, maxOpenConns int) (*sql.DB, *sqlx.DB, 
 	return db.DB, db, err
 }
 
-func checkStorage(s storage.Storage) error {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
-	err := s.Test(ctx)
-	cancel()
-	return err
+func getQueueSizes(rt *runtime.Runtime) (int, int, int) {
+	rc := rt.RP.Get()
+	defer rc.Close()
+
+	handler, err := tasks.HandlerQueue.Size(rc)
+	if err != nil {
+		slog.Error("error calculating handler queue size", "error", err)
+	}
+	batch, err := tasks.BatchQueue.Size(rc)
+	if err != nil {
+		slog.Error("error calculating batch queue size", "error", err)
+	}
+	throttled, err := tasks.ThrottledQueue.Size(rc)
+	if err != nil {
+		slog.Error("error calculating throttled queue size", "error", err)
+	}
+
+	return handler, batch, throttled
 }

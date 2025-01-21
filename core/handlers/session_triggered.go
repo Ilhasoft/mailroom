@@ -21,7 +21,7 @@ func handleSessionTriggered(ctx context.Context, rt *runtime.Runtime, tx *sqlx.T
 
 	slog.Debug("session triggered", "contact", scene.ContactUUID(), "session", scene.SessionID(), slog.Group("flow", "uuid", event.Flow.UUID, "name", event.Flow.Name))
 
-	scene.AppendToEventPreCommitHook(hooks.InsertStartHook, event)
+	scene.AppendToEventPreCommitHook(hooks.CreateStartsHook, event)
 
 	return nil
 }

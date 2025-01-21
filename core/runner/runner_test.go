@@ -25,9 +25,8 @@ import (
 
 func TestStartFlowBatch(t *testing.T) {
 	ctx, rt := testsuite.Runtime()
-	rt.Config.AndroidCredentialsFile = `testdata/android.json`
 
-	defer testsuite.Reset(testsuite.ResetAll)
+	defer testsuite.Reset(testsuite.ResetAll) // because it changes contacts
 
 	oa := testdata.Org1.Load(rt)
 
@@ -37,11 +36,10 @@ func TestStartFlowBatch(t *testing.T) {
 	err := models.InsertFlowStarts(ctx, rt.DB, []*models.FlowStart{start1})
 	require.NoError(t, err)
 
-	batch1 := start1.CreateBatch([]models.ContactID{testdata.Cathy.ID, testdata.Bob.ID}, models.FlowTypeBackground, false, 4)
-	batch2 := start1.CreateBatch([]models.ContactID{testdata.George.ID, testdata.Alexandria.ID}, models.FlowTypeBackground, true, 4)
+	batch1 := start1.CreateBatch([]models.ContactID{testdata.Cathy.ID, testdata.Bob.ID}, true, false, 4)
 
 	// start the first batch...
-	sessions, err := runner.StartFlowBatch(ctx, rt, oa, batch1)
+	sessions, err := runner.StartFlowBatch(ctx, rt, oa, start1, batch1)
 	require.NoError(t, err)
 	assert.Len(t, sessions, 2)
 
@@ -50,30 +48,24 @@ func TestStartFlowBatch(t *testing.T) {
 		Returns(2)
 
 	assertdb.Query(t, rt.DB, `SELECT count(*) FROM flows_flowrun WHERE contact_id = ANY($1) and flow_id = $2 AND responded = FALSE AND org_id = 1 AND status = 'C'
-		AND results IS NOT NULL AND path IS NOT NULL AND session_id IS NOT NULL`, pq.Array([]models.ContactID{testdata.Cathy.ID, testdata.Bob.ID}), testdata.SingleMessage.ID).
+		AND results IS NOT NULL AND path_nodes IS NOT NULL AND session_id IS NOT NULL`, pq.Array([]models.ContactID{testdata.Cathy.ID, testdata.Bob.ID}), testdata.SingleMessage.ID).
 		Returns(2)
 
 	assertdb.Query(t, rt.DB, `SELECT count(*) FROM msgs_msg WHERE contact_id = ANY($1) AND text = 'Hey, how are you?' AND org_id = 1 AND status = 'Q' 
 		AND direction = 'O' AND msg_type = 'T'`, pq.Array([]models.ContactID{testdata.Cathy.ID, testdata.Bob.ID})).
 		Returns(2)
 
-	assertdb.Query(t, rt.DB, `SELECT status FROM flows_flowstart WHERE id = $1`, start1.ID).Returns("P")
-
-	// start the second batch...
-	sessions, err = runner.StartFlowBatch(ctx, rt, oa, batch2)
-	require.NoError(t, err)
-	assert.Len(t, sessions, 2)
-
-	assertdb.Query(t, rt.DB, `SELECT status FROM flows_flowstart WHERE id = $1`, start1.ID).Returns("C")
-
 	// create a start object with params
-	testdata.InsertFlowStart(rt, testdata.Org1, testdata.IncomingExtraFlow, nil)
+	testdata.InsertFlowStart(rt, testdata.Org1, testdata.Admin, testdata.IncomingExtraFlow, nil)
 	start2 := models.NewFlowStart(models.OrgID(1), models.StartTypeManual, testdata.IncomingExtraFlow.ID).
 		WithContactIDs([]models.ContactID{testdata.Cathy.ID}).
 		WithParams([]byte(`{"name":"Fred", "age":33}`))
-	batch3 := start2.CreateBatch([]models.ContactID{testdata.Cathy.ID}, models.FlowTypeMessaging, true, 1)
+	err = models.InsertFlowStarts(ctx, rt.DB, []*models.FlowStart{start2})
+	require.NoError(t, err)
 
-	sessions, err = runner.StartFlowBatch(ctx, rt, oa, batch3)
+	batch2 := start2.CreateBatch([]models.ContactID{testdata.Cathy.ID}, false, true, 1)
+
+	sessions, err = runner.StartFlowBatch(ctx, rt, oa, start2, batch2)
 	require.NoError(t, err)
 	assert.Len(t, sessions, 1)
 
@@ -97,7 +89,7 @@ func TestResume(t *testing.T) {
 	modelContact, flowContact, _ := testdata.Cathy.Load(rt, oa)
 
 	trigger := triggers.NewBuilder(oa.Env(), flow.Reference(), flowContact).Manual().Build()
-	sessions, err := runner.StartFlowForContacts(ctx, rt, oa, flow, []*models.Contact{modelContact}, []flows.Trigger{trigger}, nil, true)
+	sessions, err := runner.StartFlowForContacts(ctx, rt, oa, flow, []*models.Contact{modelContact}, []flows.Trigger{trigger}, nil, true, models.NilStartID)
 	assert.NoError(t, err)
 	assert.NotNil(t, sessions)
 
@@ -126,7 +118,7 @@ func TestResume(t *testing.T) {
 	session := sessions[0]
 	for i, tc := range tcs {
 		// answer our first question
-		msg := flows.NewMsgIn(flows.MsgUUID(uuids.New()), testdata.Cathy.URN, nil, tc.Message, nil)
+		msg := flows.NewMsgIn(flows.MsgUUID(uuids.NewV4()), testdata.Cathy.URN, nil, tc.Message, nil)
 		msg.SetID(10)
 		resume := resumes.NewMsg(oa.Env(), flowContact, msg)
 
@@ -141,7 +133,7 @@ func TestResume(t *testing.T) {
 
 		runQuery := `SELECT count(*) FROM flows_flowrun WHERE contact_id = $1 AND flow_id = $2
 		 AND status = $3 AND responded = TRUE AND org_id = 1 AND current_node_uuid IS NOT NULL
-		 AND json_array_length(path::json) = $4 AND session_id IS NOT NULL`
+		 AND array_length(path_nodes, 1) = $4 AND session_id IS NOT NULL`
 
 		assertdb.Query(t, rt.DB, runQuery, modelContact.ID(), flow.ID(), tc.RunStatus, tc.PathLength).
 			Returns(1, "%d: didn't find expected run", i)
@@ -172,7 +164,7 @@ func TestStartFlowConcurrency(t *testing.T) {
 	// create a lot of contacts...
 	contacts := make([]*testdata.Contact, 100)
 	for i := range contacts {
-		contacts[i] = testdata.InsertContact(rt, testdata.Org1, flows.ContactUUID(uuids.New()), "Jim", i18n.NilLanguage, models.ContactStatusActive)
+		contacts[i] = testdata.InsertContact(rt, testdata.Org1, flows.ContactUUID(uuids.NewV4()), "Jim", i18n.NilLanguage, models.ContactStatusActive)
 	}
 
 	options := &runner.StartOptions{
@@ -186,7 +178,7 @@ func TestStartFlowConcurrency(t *testing.T) {
 
 	// start each contact in the flow at the same time...
 	test.RunConcurrently(len(contacts), func(i int) {
-		sessions, err := runner.StartFlow(ctx, rt, oa, dbFlow, []models.ContactID{contacts[i].ID}, options)
+		sessions, err := runner.StartFlow(ctx, rt, oa, dbFlow, []models.ContactID{contacts[i].ID}, options, models.NilStartID)
 		assert.NoError(t, err)
 		assert.Equal(t, 1, len(sessions))
 	})

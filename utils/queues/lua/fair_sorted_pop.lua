@@ -1,8 +1,8 @@
 local activeSetKey = KEYS[1]
 local queueBase = ARGV[1]
 
--- first get what is the active queue
-local result = redis.call("ZRANGE", activeSetKey, 0, 0)
+-- first get the owner with the least workers and not paused
+local result = redis.call("ZRANGEBYSCORE", activeSetKey, "-inf", 999999, "LIMIT", 0, 1)
 
 -- nothing? return nothing
 local ownerID = result[1]

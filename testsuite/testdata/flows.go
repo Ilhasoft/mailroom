@@ -78,11 +78,11 @@ func ImportFlows(rt *runtime.Runtime, org *Org, path string) []*Flow {
 }
 
 // InsertFlowStart inserts a flow start
-func InsertFlowStart(rt *runtime.Runtime, org *Org, flow *Flow, contacts []*Contact) models.StartID {
+func InsertFlowStart(rt *runtime.Runtime, org *Org, user *User, flow *Flow, contacts []*Contact) models.StartID {
 	var id models.StartID
 	must(rt.DB.Get(&id,
 		`INSERT INTO flows_flowstart(uuid, org_id, flow_id, start_type, exclusions, created_on, modified_on, contact_count, status, created_by_id)
-		 VALUES($1, $2, $3, 'M', '{}', NOW(), NOW(), 2, 'P', 1) RETURNING id`, uuids.New(), org.ID, flow.ID,
+		 VALUES($1, $2, $3, 'M', '{}', NOW(), NOW(), 2, 'P', $4) RETURNING id`, uuids.NewV4(), org.ID, flow.ID, user.ID,
 	))
 
 	for _, c := range contacts {
@@ -108,7 +108,7 @@ func InsertFlowSession(rt *runtime.Runtime, org *Org, contact *Contact, sessionT
 	var id models.SessionID
 	must(rt.DB.Get(&id,
 		`INSERT INTO flows_flowsession(uuid, org_id, contact_id, status, output, responded, created_on, session_type, current_flow_id, call_id, wait_started_on, wait_expires_on, wait_resume_on_expire, ended_on) 
-		 VALUES($1, $2, $3, $4, '{}', TRUE, NOW(), $5, $6, $7, $8, $9, FALSE, $10) RETURNING id`, uuids.New(), org.ID, contact.ID, status, sessionType, currentFlow.ID, callID, waitStartedOn, waitExpiresOn, endedOn,
+		 VALUES($1, $2, $3, $4, '{}', TRUE, NOW(), $5, $6, $7, $8, $9, FALSE, $10) RETURNING id`, uuids.NewV4(), org.ID, contact.ID, status, sessionType, currentFlow.ID, callID, waitStartedOn, waitExpiresOn, endedOn,
 	))
 	return id
 }
@@ -118,7 +118,7 @@ func InsertWaitingSession(rt *runtime.Runtime, org *Org, contact *Contact, sessi
 	var id models.SessionID
 	must(rt.DB.Get(&id,
 		`INSERT INTO flows_flowsession(uuid, org_id, contact_id, status, output, responded, created_on, session_type, current_flow_id, call_id, wait_started_on, wait_expires_on, wait_resume_on_expire, timeout_on) 
-		 VALUES($1, $2, $3, 'W', '{"status":"waiting"}', TRUE, NOW(), $4, $5, $6, $7, $8, $9, $10) RETURNING id`, uuids.New(), org.ID, contact.ID, sessionType, currentFlow.ID, callID, waitStartedOn, waitExpiresOn, waitResumeOnExpire, waitTimeoutOn,
+		 VALUES($1, $2, $3, 'W', '{"status":"waiting"}', TRUE, NOW(), $4, $5, $6, $7, $8, $9, $10) RETURNING id`, uuids.NewV4(), org.ID, contact.ID, sessionType, currentFlow.ID, callID, waitStartedOn, waitExpiresOn, waitResumeOnExpire, waitTimeoutOn,
 	))
 	return id
 }
@@ -135,7 +135,7 @@ func InsertFlowRun(rt *runtime.Runtime, org *Org, sessionID models.SessionID, co
 	var id models.FlowRunID
 	must(rt.DB.Get(&id,
 		`INSERT INTO flows_flowrun(uuid, org_id, session_id, contact_id, flow_id, status, responded, current_node_uuid, created_on, modified_on, exited_on) 
-		 VALUES($1, $2, $3, $4, $5, $6, TRUE, $7, NOW(), NOW(), $8) RETURNING id`, uuids.New(), org.ID, sessionID, contact.ID, flow.ID, status, null.String(currentNodeUUID), exitedOn,
+		 VALUES($1, $2, $3, $4, $5, $6, TRUE, $7, NOW(), NOW(), $8) RETURNING id`, uuids.NewV4(), org.ID, sessionID, contact.ID, flow.ID, status, null.String(currentNodeUUID), exitedOn,
 	))
 	return id
 }

@@ -27,6 +27,7 @@ import (
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/core/runner"
 	"github.com/nyaruka/mailroom/runtime"
+	"github.com/nyaruka/mailroom/utils/clogs"
 	"github.com/nyaruka/null/v3"
 )
 
@@ -128,7 +129,7 @@ func HangupCall(ctx context.Context, rt *runtime.Runtime, call *models.Call) (*m
 		clog.HTTP(trace)
 	}
 	if err != nil {
-		clog.Error(err)
+		clog.Error(clogs.NewLogError("", "", err.Error()))
 	}
 
 	if err := call.AttachLog(ctx, rt.DB, clog); err != nil {
@@ -260,7 +261,7 @@ func RequestStartForCall(ctx context.Context, rt *runtime.Runtime, channel *mode
 		clog.HTTP(trace)
 	}
 	if err != nil {
-		clog.Error(err)
+		clog.Error(clogs.NewLogError("", "", err.Error()))
 
 		// set our status as errored
 		err := call.UpdateStatus(ctx, rt.DB, models.CallStatusFailed, 0, time.Now())
@@ -302,7 +303,7 @@ func StartIVRFlow(
 	}
 
 	// get the flow for our start
-	start, err := models.GetFlowStartAttributes(ctx, rt.DB, startID)
+	start, err := models.GetFlowStartByID(ctx, rt.DB, startID)
 	if err != nil {
 		return fmt.Errorf("unable to load start: %d: %w", startID, err)
 	}
@@ -380,7 +381,7 @@ func StartIVRFlow(
 	}
 
 	// start our flow
-	sessions, err := runner.StartFlowForContacts(ctx, rt, oa, flow, []*models.Contact{c}, []flows.Trigger{trigger}, hook, true)
+	sessions, err := runner.StartFlowForContacts(ctx, rt, oa, flow, []*models.Contact{c}, []flows.Trigger{trigger}, hook, true, models.NilStartID)
 	if err != nil {
 		return fmt.Errorf("error starting flow: %w", err)
 	}
@@ -410,7 +411,7 @@ func ResumeIVRFlow(
 		return fmt.Errorf("error creating flow contact: %w", err)
 	}
 
-	session, err := models.FindWaitingSessionForContact(ctx, rt.DB, rt.SessionStorage, oa, models.FlowTypeVoice, contact)
+	session, err := models.FindWaitingSessionForContact(ctx, rt, oa, models.FlowTypeVoice, contact)
 	if err != nil {
 		return fmt.Errorf("error loading session for contact: %w", err)
 	}
@@ -531,7 +532,7 @@ func buildMsgResume(
 	svc Service, channel *models.Channel, contact *flows.Contact, urn urns.URN,
 	call *models.Call, oa *models.OrgAssets, r *http.Request, resume InputResume) (flows.Resume, error, error) {
 	// our msg UUID
-	msgUUID := flows.MsgUUID(uuids.New())
+	msgUUID := flows.MsgUUID(uuids.NewV4())
 
 	// we have an attachment, download it locally
 	if resume.Attachment != NilAttachment {
@@ -607,7 +608,7 @@ func HandleIVRStatus(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAss
 		}
 
 		// on errors we need to look up the flow to know how long to wait before retrying
-		start, err := models.GetFlowStartAttributes(ctx, rt.DB, call.StartID())
+		start, err := models.GetFlowStartByID(ctx, rt.DB, call.StartID())
 		if err != nil {
 			return fmt.Errorf("unable to load start: %d: %w", call.StartID(), err)
 		}

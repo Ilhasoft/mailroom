@@ -24,7 +24,7 @@ func TestTicketClosed(t *testing.T) {
 	// add a ticket closed trigger
 	testdata.InsertTicketClosedTrigger(rt, testdata.Org1, testdata.Favorites)
 
-	ticket := testdata.InsertClosedTicket(rt, testdata.Org1, testdata.Cathy, testdata.DefaultTopic, "Where are my shoes?", nil)
+	ticket := testdata.InsertClosedTicket(rt, testdata.Org1, testdata.Cathy, testdata.DefaultTopic, nil)
 	modelTicket := ticket.Load(rt)
 
 	models.NewTicketClosedEvent(modelTicket, testdata.Admin.ID)

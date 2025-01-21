@@ -88,7 +88,7 @@ func TestTimedEvents(t *testing.T) {
 			ctask = &ctasks.MsgEventTask{
 				ChannelID: tc.Channel.ID,
 				MsgID:     models.MsgID(1),
-				MsgUUID:   flows.MsgUUID(uuids.New()),
+				MsgUUID:   flows.MsgUUID(uuids.NewV4()),
 				URN:       tc.Contact.URN,
 				URNID:     tc.Contact.URNID,
 				Text:      tc.Message,

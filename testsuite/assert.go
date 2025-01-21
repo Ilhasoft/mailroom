@@ -9,6 +9,7 @@ import (
 	"github.com/nyaruka/gocommon/jsonx"
 	"github.com/nyaruka/goflow/test"
 	"github.com/nyaruka/mailroom/core/models"
+	"github.com/nyaruka/mailroom/testsuite/testdata"
 	"github.com/nyaruka/mailroom/utils/queues"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,11 +50,11 @@ func AssertCourierQueues(t *testing.T, expected map[string][]int, errMsg ...any)
 }
 
 // AssertContactTasks asserts that the given contact has the given tasks queued for them
-func AssertContactTasks(t *testing.T, orgID models.OrgID, contactID models.ContactID, expected []string, msgAndArgs ...any) {
+func AssertContactTasks(t *testing.T, org *testdata.Org, contact *testdata.Contact, expected []string, msgAndArgs ...any) {
 	rc := getRC()
 	defer rc.Close()
 
-	tasks, err := redis.Strings(rc.Do("LRANGE", fmt.Sprintf("c:%d:%d", orgID, contactID), 0, -1))
+	tasks, err := redis.Strings(rc.Do("LRANGE", fmt.Sprintf("c:%d:%d", org.ID, contact.ID), 0, -1))
 	require.NoError(t, err)
 
 	expectedJSON := jsonx.MustMarshal(expected)
@@ -67,7 +68,7 @@ func AssertBatchTasks(t *testing.T, orgID models.OrgID, expected map[string]int,
 	rc := getRC()
 	defer rc.Close()
 
-	tasks, err := redis.Strings(rc.Do("ZRANGE", fmt.Sprintf("batch:%d", orgID), 0, -1))
+	tasks, err := redis.Strings(rc.Do("ZRANGE", fmt.Sprintf("tasks:batch:%d", orgID), 0, -1))
 	require.NoError(t, err)
 
 	actual := make(map[string]int, 5)

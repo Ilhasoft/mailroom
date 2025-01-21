@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/nyaruka/goflow/flows"
@@ -12,7 +14,6 @@ import (
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/mailroom/web"
-	"golang.org/x/exp/maps"
 )
 
 func init() {
@@ -111,7 +112,7 @@ func tryToLockAndModify(ctx context.Context, rt *runtime.Runtime, oa *models.Org
 		return nil, nil, err
 	}
 
-	locked := maps.Keys(locks)
+	locked := slices.Collect(maps.Keys(locks))
 
 	defer models.UnlockContacts(rt, oa.OrgID(), locks)
 

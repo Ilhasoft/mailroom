@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -61,30 +62,18 @@ func BulkQuery[T any](ctx context.Context, label string, tx DBorTx, sql string, 
 func BulkQueryBatches[T any](ctx context.Context, label string, tx DBorTx, sql string, batchSize int, structs []T) error {
 	start := time.Now()
 
-	batches := ChunkSlice(structs, batchSize)
-	for i, batch := range batches {
+	i := 0
+	for batch := range slices.Chunk(structs, batchSize) {
 		err := dbutil.BulkQuery(ctx, tx, sql, batch)
 		if err != nil {
 			return fmt.Errorf("error making bulk batch query: %w", err)
 		}
 
-		slog.Info(fmt.Sprintf("%s bulk sql batch complete", label), "elapsed", time.Since(start), "rows", len(batch), "batch", i+1)
+		slog.Info(fmt.Sprintf("%s bulk sql batch complete", label), "elapsed", time.Since(start), "rows", len(batch), "batch", i)
+		i++
 	}
 
 	return nil
-}
-
-func ChunkSlice[T any](slice []T, size int) [][]T {
-	chunks := make([][]T, 0, len(slice)/size+1)
-
-	for i := 0; i < len(slice); i += size {
-		end := i + size
-		if end > len(slice) {
-			end = len(slice)
-		}
-		chunks = append(chunks, slice[i:end])
-	}
-	return chunks
 }
 
 func ScanJSONRows[T any](rows *sql.Rows, f func() T) ([]T, error) {

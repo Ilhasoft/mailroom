@@ -37,47 +37,50 @@ func (t *StartIVRFlowBatchTask) WithAssets() models.Refresh {
 }
 
 func (t *StartIVRFlowBatchTask) Perform(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets) error {
-	return handleFlowStartBatch(ctx, rt, oa, t.FlowStartBatch)
-}
+	var start *models.FlowStart
+	var err error
 
-// starts a batch of contacts in an IVR flow
-func handleFlowStartBatch(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, batch *models.FlowStartBatch) error {
+	// if this batch belongs to a persisted start, fetch it
+	if t.StartID != models.NilStartID {
+		start, err = models.GetFlowStartByID(ctx, rt.DB, t.StartID)
+		if err != nil {
+			return fmt.Errorf("error loading flow start for batch: %w", err)
+		}
+	} else {
+		start = t.Start // otherwise use start from the task
+	}
+
+	// if this start was interrupted, we're done
+	if start.Status == models.StartStatusInterrupted {
+		return nil
+	}
+
 	// ok, we can initiate calls for the remaining contacts
-	contacts, err := models.LoadContacts(ctx, rt.ReadonlyDB, oa, batch.ContactIDs)
+	contacts, err := models.LoadContacts(ctx, rt.ReadonlyDB, oa, t.ContactIDs)
 	if err != nil {
 		return fmt.Errorf("error loading contacts: %w", err)
 	}
 
 	// for each contacts, request a call start
 	for _, contact := range contacts {
-		start := time.Now()
-
 		ctx, cancel := context.WithTimeout(ctx, time.Minute)
-		session, err := ivr.RequestCall(ctx, rt, oa, batch, contact)
+		session, err := ivr.RequestCall(ctx, rt, oa, t.FlowStartBatch, contact)
 		cancel()
 		if err != nil {
-			slog.Error(fmt.Sprintf("error starting ivr flow for contact: %d and flow: %d", contact.ID(), batch.FlowID), "error", err)
+			slog.Error(fmt.Sprintf("error starting ivr flow for contact: %d and flow: %d", contact.ID(), start.FlowID), "error", err)
 			continue
 		}
 		if session == nil {
-
-			slog.Info("call start skipped, no suitable channel", "elapsed", time.Since(start), "contact_id", contact.ID(), "start_id", batch.StartID)
+			slog.Debug("call start skipped, no suitable channel", "contact_id", contact.ID(), "start_id", start.ID)
 			continue
 		}
-		slog.Info("requested call for contact",
-			"elapsed", time.Since(start),
-			"contact_id", contact.ID(),
-			"status", session.Status(),
-			"start_id", batch.StartID,
-			"external_id", session.ExternalID(),
-		)
+		slog.Debug("requested call for contact", "contact_id", contact.ID(), "status", session.Status(), "start_id", start.ID, "external_id", session.ExternalID())
 	}
 
 	// if this is a last batch, mark our start as started
-	if batch.IsLast {
-		err := models.MarkStartComplete(ctx, rt.DB, batch.StartID)
-		if err != nil {
-			return fmt.Errorf("error trying to set batch as complete: %w", err)
+	if t.IsLast {
+		if err := start.SetCompleted(ctx, rt.DB); err != nil {
+			return fmt.Errorf("error marking start as complete: %w", err)
 		}
 	}
 

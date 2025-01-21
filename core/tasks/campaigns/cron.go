@@ -3,6 +3,7 @@ package campaigns
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
@@ -10,9 +11,7 @@ import (
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/nyaruka/mailroom/utils/queues"
 	"github.com/nyaruka/redisx"
-	"golang.org/x/exp/slog"
 )
 
 const (
@@ -118,7 +117,7 @@ func (c *QueueEventsCron) queueFiresTask(rp *redis.Pool, orgID models.OrgID, tas
 	rc := rp.Get()
 	defer rc.Close()
 
-	err := tasks.Queue(rc, tasks.BatchQueue, orgID, task, queues.DefaultPriority)
+	err := tasks.Queue(rc, tasks.BatchQueue, orgID, task, false)
 	if err != nil {
 		return fmt.Errorf("error queuing task: %w", err)
 	}

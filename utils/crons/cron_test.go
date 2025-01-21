@@ -9,7 +9,6 @@ import (
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/mailroom/testsuite"
 	"github.com/nyaruka/mailroom/utils/crons"
-	"github.com/nyaruka/redisx/assertredis"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -18,15 +17,13 @@ func TestCron(t *testing.T) {
 	rc := rt.RP.Get()
 	defer rc.Close()
 
-	defer testsuite.Reset(testsuite.ResetRedis)
-
 	align := func() {
 		untilNextSecond := time.Nanosecond * time.Duration(1_000_000_000-time.Now().Nanosecond()) // time until next second boundary
 		time.Sleep(untilNextSecond)                                                               // wait until after second boundary
 	}
 
 	createCronFunc := func(running *bool, fired *int, delays map[int]time.Duration, defaultDelay time.Duration) crons.Function {
-		return func(ctx context.Context, rt *runtime.Runtime) (map[string]any, error) {
+		return func(ctx context.Context, rt *runtime.Runtime) error {
 			if *running {
 				assert.Fail(t, "more than 1 thread is trying to run our cron job")
 			}
@@ -39,7 +36,7 @@ func TestCron(t *testing.T) {
 			time.Sleep(delay)
 			*fired++
 			*running = false
-			return map[string]any{"fired": *fired}, nil
+			return nil
 		}
 	}
 
@@ -71,12 +68,6 @@ func TestCron(t *testing.T) {
 	fired = 0
 	quit = make(chan bool)
 	running = false
-
-	assertredis.Exists(t, rc, "cron_stats:last_start")
-	assertredis.Exists(t, rc, "cron_stats:last_time")
-	assertredis.HGet(t, rc, "cron_stats:last_result", "test1", `{"fired":4}`)
-	assertredis.HGet(t, rc, "cron_stats:call_count", "test1", "4")
-	assertredis.Exists(t, rc, "cron_stats:total_time")
 
 	align()
 

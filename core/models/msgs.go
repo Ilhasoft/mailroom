@@ -25,6 +25,7 @@ import (
 	"github.com/nyaruka/goflow/utils"
 	"github.com/nyaruka/mailroom/core/goflow"
 	"github.com/nyaruka/mailroom/runtime"
+	"github.com/nyaruka/mailroom/utils/clogs"
 	"github.com/nyaruka/null/v3"
 )
 
@@ -240,7 +241,7 @@ func (m *Msg) Attachments() []utils.Attachment {
 func NewIncomingAndroid(orgID OrgID, channelID ChannelID, contactID ContactID, urnID URNID, text string, receivedOn time.Time) *Msg {
 	msg := &Msg{}
 	m := &msg.m
-	m.UUID = flows.MsgUUID(uuids.New())
+	m.UUID = flows.MsgUUID(uuids.NewV4())
 	m.OrgID = orgID
 	m.ChannelID = channelID
 	m.ContactID = contactID
@@ -321,7 +322,7 @@ func NewOutgoingIVR(cfg *runtime.Config, orgID OrgID, call *Call, out *flows.Msg
 func NewOutgoingOptInMsg(rt *runtime.Runtime, session *Session, flow *Flow, optIn *OptIn, channel *Channel, urn urns.URN, createdOn time.Time) *Msg {
 	msg := &Msg{}
 	m := &msg.m
-	m.UUID = flows.MsgUUID(uuids.New())
+	m.UUID = flows.MsgUUID(uuids.NewV4())
 	m.OrgID = session.OrgID()
 	m.ContactID = session.ContactID()
 	m.HighPriority = session.IncomingMsgID() != NilMsgID
@@ -354,8 +355,8 @@ func NewOutgoingFlowMsg(rt *runtime.Runtime, org *Org, channel *Channel, session
 }
 
 // NewOutgoingBroadcastMsg creates an outgoing message which is part of a broadcast
-func NewOutgoingBroadcastMsg(rt *runtime.Runtime, org *Org, channel *Channel, contact *flows.Contact, out *flows.MsgOut, bb *BroadcastBatch) (*Msg, error) {
-	return newOutgoingTextMsg(rt, org, channel, contact, out, nil, nil, bb.BroadcastID, NilTicketID, bb.OptInID, bb.CreatedByID, dates.Now())
+func NewOutgoingBroadcastMsg(rt *runtime.Runtime, org *Org, channel *Channel, contact *flows.Contact, out *flows.MsgOut, b *Broadcast) (*Msg, error) {
+	return newOutgoingTextMsg(rt, org, channel, contact, out, nil, nil, b.ID, NilTicketID, b.OptInID, b.CreatedByID, dates.Now())
 }
 
 // NewOutgoingTicketMsg creates an outgoing message from a ticket
@@ -658,7 +659,7 @@ msgs_msg(uuid, text, attachments, quick_replies, locale, templating, high_priori
 RETURNING id, modified_on`
 
 // MarkMessageHandled updates a message after handling
-func MarkMessageHandled(ctx context.Context, tx DBorTx, msgID MsgID, status MsgStatus, visibility MsgVisibility, flowID FlowID, ticketID TicketID, attachments []utils.Attachment, logUUIDs []ChannelLogUUID) error {
+func MarkMessageHandled(ctx context.Context, tx DBorTx, msgID MsgID, status MsgStatus, visibility MsgVisibility, flowID FlowID, ticketID TicketID, attachments []utils.Attachment, logUUIDs []clogs.LogUUID) error {
 	_, err := tx.ExecContext(ctx,
 		`UPDATE msgs_msg SET status = $2, visibility = $3, flow_id = $4, ticket_id = $5, attachments = $6, log_uuids = array_cat(log_uuids, $7) WHERE id = $1`,
 		msgID, status, visibility, flowID, ticketID, pq.Array(attachments), pq.Array(logUUIDs),
@@ -683,7 +684,7 @@ func MarkMessagesQueued(ctx context.Context, db DBorTx, msgs []*Msg) error {
 
 const sqlUpdateMsgStatus = `
 UPDATE msgs_msg
-   SET status = m.status, next_attempt = m.next_attempt::timestamp with time zone
+   SET status = m.status, next_attempt = m.next_attempt::timestamptz
   FROM (VALUES(:id, :status, :next_attempt)) AS m(id, status, next_attempt)
  WHERE msgs_msg.id = m.id::bigint`
 

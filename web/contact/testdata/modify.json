@@ -1368,9 +1368,9 @@
                         "uuid": "0a8f2e00-fef6-402c-bd79-d789446ec0e0",
                         "name": "Support"
                     },
-                    "body": "Need help",
+                    "note": "Need help",
                     "assignee": {
-                        "email": "admin1@nyaruka.com",
+                        "email": "admin1@textit.com",
                         "name": "Andy Admin"
                     }
                 }
@@ -1399,9 +1399,8 @@
                                 "uuid": "0a8f2e00-fef6-402c-bd79-d789446ec0e0",
                                 "name": "Support"
                             },
-                            "body": "Need help",
                             "assignee": {
-                                "email": "admin1@nyaruka.com",
+                                "email": "admin1@textit.com",
                                 "name": "Andy Admin"
                             }
                         }
@@ -1416,12 +1415,12 @@
                                     "uuid": "0a8f2e00-fef6-402c-bd79-d789446ec0e0",
                                     "name": "Support"
                                 },
-                                "body": "Need help",
                                 "assignee": {
-                                    "email": "admin1@nyaruka.com",
+                                    "email": "admin1@textit.com",
                                     "name": "Andy Admin"
                                 }
-                            }
+                            },
+                            "note": "Need help"
                         },
                         {
                             "type": "contact_groups_changed",
@@ -1508,9 +1507,8 @@
                                 "uuid": "0a8f2e00-fef6-402c-bd79-d789446ec0e0",
                                 "name": "Support"
                             },
-                            "body": "Need help",
                             "assignee": {
-                                "email": "admin1@nyaruka.com",
+                                "email": "admin1@textit.com",
                                 "name": "Andy Admin"
                             }
                         }
@@ -1598,9 +1596,8 @@
                                 "uuid": "0a8f2e00-fef6-402c-bd79-d789446ec0e0",
                                 "name": "Support"
                             },
-                            "body": "Need help",
                             "assignee": {
-                                "email": "admin1@nyaruka.com",
+                                "email": "admin1@textit.com",
                                 "name": "Andy Admin"
                             }
                         }

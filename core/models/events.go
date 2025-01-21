@@ -153,7 +153,7 @@ func ApplyEventPreCommitHooks(ctx context.Context, rt *runtime.Runtime, tx *sqlx
 	for hook, args := range preHooks {
 		err := hook.Apply(ctx, rt, tx, oa, args)
 		if err != nil {
-			return fmt.Errorf("error applying pre commit hook: %T: %w", hook, err)
+			return fmt.Errorf("error applying events pre commit hook: %T: %w", hook, err)
 		}
 	}
 

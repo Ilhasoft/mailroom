@@ -19,7 +19,7 @@ type CampaignEvent struct {
 }
 
 func InsertCampaign(rt *runtime.Runtime, org *Org, name string, group *Group) *Campaign {
-	uuid := models.CampaignUUID(uuids.New())
+	uuid := models.CampaignUUID(uuids.NewV4())
 	var id models.CampaignID
 	must(rt.DB.Get(&id,
 		`INSERT INTO campaigns_campaign(uuid, org_id, name, group_id, is_archived, is_system, is_active, created_on, modified_on, created_by_id, modified_by_id) 
@@ -29,7 +29,7 @@ func InsertCampaign(rt *runtime.Runtime, org *Org, name string, group *Group) *C
 }
 
 func InsertCampaignFlowEvent(rt *runtime.Runtime, campaign *Campaign, flow *Flow, relativeTo *Field, offset int, unit string) *CampaignEvent {
-	uuid := models.CampaignEventUUID(uuids.New())
+	uuid := models.CampaignEventUUID(uuids.NewV4())
 	var id models.CampaignEventID
 	must(rt.DB.Get(&id,
 		`INSERT INTO campaigns_campaignevent(

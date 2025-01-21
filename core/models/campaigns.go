@@ -343,7 +343,7 @@ const sqlMarkEventsFired = `
 UPDATE 
 	campaigns_eventfire f
 SET
-	fired = r.fired::timestamp with time zone,
+	fired = r.fired::timestamptz,
 	fired_result = r.fired_result::varchar
 FROM (
 	VALUES(:fire_id, :fired, :fired_result)

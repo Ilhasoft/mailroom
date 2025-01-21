@@ -33,9 +33,9 @@ func RunWebTests(t *testing.T, ctx context.Context, rt *runtime.Runtime, truthFi
 	wg := &sync.WaitGroup{}
 
 	defer uuids.SetGenerator(uuids.DefaultGenerator)
-	uuids.SetGenerator(uuids.NewSeededGenerator(123456))
+	uuids.SetGenerator(uuids.NewSeededGenerator(123456, time.Now))
 
-	defer dates.SetNowSource(dates.DefaultNowSource)
+	defer dates.SetNowFunc(time.Now)
 
 	server := web.NewServer(ctx, rt, wg)
 	server.Start()
@@ -73,7 +73,7 @@ func RunWebTests(t *testing.T, ctx context.Context, rt *runtime.Runtime, truthFi
 	var err error
 
 	for i, tc := range tcs {
-		dates.SetNowSource(dates.NewSequentialNowSource(time.Date(2018, 7, 6, 12, 30, 0, 123456789, time.UTC)))
+		dates.SetNowFunc(dates.NewSequentialNow(time.Date(2018, 7, 6, 12, 30, 0, 123456789, time.UTC), time.Second))
 
 		var clonedMocks *httpx.MockRequestor
 		if tc.HTTPMocks != nil {
@@ -140,6 +140,14 @@ func RunWebTests(t *testing.T, ctx context.Context, rt *runtime.Runtime, truthFi
 			} else {
 				expectedResponse = tc.Response
 				expectedIsJSON = true
+
+				// if response is a single string.. treat it as a text/plain response
+				if bytes.HasPrefix(expectedResponse, []byte(`"`)) && bytes.HasSuffix(expectedResponse, []byte(`"`)) {
+					var responseText string
+					jsonx.MustUnmarshal(expectedResponse, &responseText)
+					expectedResponse = []byte(responseText)
+					expectedIsJSON = false
+				}
 			}
 
 			if expectedIsJSON {

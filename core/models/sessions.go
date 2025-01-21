@@ -9,12 +9,15 @@ import (
 	"log/slog"
 	"net/url"
 	"path"
+	"slices"
+	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/gomodule/redigo/redis"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
-	"github.com/nyaruka/gocommon/storage"
+	"github.com/nyaruka/gocommon/aws/s3x"
 	"github.com/nyaruka/gocommon/uuids"
 	"github.com/nyaruka/goflow/assets"
 	"github.com/nyaruka/goflow/envs"
@@ -271,25 +274,6 @@ WHERE
 	id = :id
 `
 
-const sqlUpdateRun = `
-UPDATE
-	flows_flowrun fr
-SET
-	status = r.status,
-	exited_on = r.exited_on::timestamp with time zone,
-	responded = r.responded::bool,
-	results = r.results,
-	path = r.path::jsonb,
-	current_node_uuid = r.current_node_uuid::uuid,
-	modified_on = NOW()
-FROM (
-	VALUES(:uuid, :status, :exited_on, :responded, :results, :path, :current_node_uuid)
-) AS
-	r(uuid, status, exited_on, responded, results, path, current_node_uuid)
-WHERE
-	fr.uuid = r.uuid::uuid
-`
-
 // Update updates the session based on the state passed in from our engine session, this also takes care of applying any event hooks
 func (s *Session) Update(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *OrgAssets, fs flows.Session, sprint flows.Sprint, contact *Contact, hook SessionCommitHook) error {
 	// make sure we have our seen runs
@@ -396,17 +380,18 @@ func (s *Session) Update(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, 
 	}
 
 	// figure out which runs are new and which are updated
-	updatedRuns := make([]any, 0, 1)
-	newRuns := make([]any, 0)
+	updatedRuns := make([]*FlowRun, 0, 1)
+	newRuns := make([]*FlowRun, 0)
+
 	for _, r := range s.Runs() {
-		modified, found := s.seenRuns[r.UUID()]
+		modified, found := s.seenRuns[r.UUID]
 		if !found {
-			newRuns = append(newRuns, &r.r)
+			newRuns = append(newRuns, r)
 			continue
 		}
 
-		if r.ModifiedOn().After(modified) {
-			updatedRuns = append(updatedRuns, &r.r)
+		if r.ModifiedOn.After(modified) {
+			updatedRuns = append(updatedRuns, r)
 			continue
 		}
 	}
@@ -420,16 +405,13 @@ func (s *Session) Update(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, 
 	}
 
 	// update all modified runs at once
-	err = BulkQuery(ctx, "update runs", tx, sqlUpdateRun, updatedRuns)
-	if err != nil {
-		slog.Error("error while updating runs for session", "error", err, "session", string(output))
-		return fmt.Errorf("error updating runs: %w", err)
+	if err := UpdateRuns(ctx, tx, updatedRuns); err != nil {
+		return fmt.Errorf("error updating existing runs: %w", err)
 	}
 
 	// insert all new runs at once
-	err = BulkQuery(ctx, "insert runs", tx, sqlInsertRun, newRuns)
-	if err != nil {
-		return fmt.Errorf("error writing runs: %w", err)
+	if err := InsertRuns(ctx, tx, newRuns); err != nil {
+		return fmt.Errorf("error inserting new runs: %w", err)
 	}
 
 	if err := RecordFlowStatistics(ctx, rt, tx, []flows.Session{fs}, []flows.Sprint{sprint}); err != nil {
@@ -487,7 +469,7 @@ func (s *Session) UnmarshalJSON(b []byte) error {
 
 // NewSession a session objects from the passed in flow session. It does NOT
 // commit said session to the database.
-func NewSession(ctx context.Context, tx *sqlx.Tx, oa *OrgAssets, fs flows.Session, sprint flows.Sprint) (*Session, error) {
+func NewSession(ctx context.Context, tx *sqlx.Tx, oa *OrgAssets, fs flows.Session, sprint flows.Sprint, startID StartID) (*Session, error) {
 	output, err := json.Marshal(fs)
 	if err != nil {
 		return nil, fmt.Errorf("error marshalling flow session: %w", err)
@@ -512,7 +494,7 @@ func NewSession(ctx context.Context, tx *sqlx.Tx, oa *OrgAssets, fs flows.Sessio
 
 	uuid := fs.UUID()
 	if uuid == "" {
-		uuid = flows.SessionUUID(uuids.New())
+		uuid = flows.SessionUUID(uuids.NewV4())
 	}
 
 	// create our session object
@@ -539,10 +521,15 @@ func NewSession(ctx context.Context, tx *sqlx.Tx, oa *OrgAssets, fs flows.Sessio
 	session.findStep = fs.FindStep
 
 	// now build up our runs
-	for _, r := range fs.Runs() {
+	for i, r := range fs.Runs() {
 		run, err := newRun(ctx, tx, oa, session, r)
 		if err != nil {
 			return nil, fmt.Errorf("error creating run: %s: %w", r.UUID(), err)
+		}
+
+		// set start id if first run of session
+		if i == 0 && startID != NilStartID {
+			run.StartID = startID
 		}
 
 		// save the run to our session
@@ -590,7 +577,7 @@ RETURNING id`
 
 // InsertSessions writes the passed in session to our database, writes any runs that need to be created
 // as well as appying any events created in the session
-func InsertSessions(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *OrgAssets, ss []flows.Session, sprints []flows.Sprint, contacts []*Contact, hook SessionCommitHook) ([]*Session, error) {
+func InsertSessions(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *OrgAssets, ss []flows.Session, sprints []flows.Sprint, contacts []*Contact, hook SessionCommitHook, startID StartID) ([]*Session, error) {
 	if len(ss) == 0 {
 		return nil, nil
 	}
@@ -602,7 +589,7 @@ func InsertSessions(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *O
 	completedCallIDs := make([]CallID, 0, 1)
 
 	for i, s := range ss {
-		session, err := NewSession(ctx, tx, oa, s, sprints[i])
+		session, err := NewSession(ctx, tx, oa, s, sprints[i], startID)
 		if err != nil {
 			return nil, fmt.Errorf("error creating session objects: %w", err)
 		}
@@ -669,14 +656,13 @@ func InsertSessions(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *O
 		return nil, fmt.Errorf("error inserting waiting sessions: %w", err)
 	}
 
-	// for each session associate our run with each
-	runs := make([]any, 0, len(sessions))
+	// gather all runs across all sessions
+	runs := make([]*FlowRun, 0, len(sessions))
 	for _, s := range sessions {
 		for _, r := range s.runs {
-			runs = append(runs, &r.r)
+			r.SessionID = s.ID() // set our session id now that it is written
 
-			// set our session id now that it is written
-			r.SetSessionID(s.ID())
+			runs = append(runs, r)
 		}
 	}
 
@@ -713,7 +699,7 @@ func InsertSessions(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *O
 	// gather all our pre commit events, group them by hook
 	err = ApplyEventPreCommitHooks(ctx, rt, tx, oa, scenes)
 	if err != nil {
-		return nil, fmt.Errorf("error applying pre commit hook: %T: %w", hook, err)
+		return nil, fmt.Errorf("error applying session pre commit hooks: %w", err)
 	}
 
 	// return our session
@@ -751,8 +737,8 @@ LIMIT 1
 `
 
 // FindWaitingSessionForContact returns the waiting session for the passed in contact, if any
-func FindWaitingSessionForContact(ctx context.Context, db *sqlx.DB, st storage.Storage, oa *OrgAssets, sessionType FlowType, contact *flows.Contact) (*Session, error) {
-	rows, err := db.QueryxContext(ctx, sqlSelectWaitingSessionForContact, sessionType, contact.ID())
+func FindWaitingSessionForContact(ctx context.Context, rt *runtime.Runtime, oa *OrgAssets, sessionType FlowType, contact *flows.Contact) (*Session, error) {
+	rows, err := rt.DB.QueryxContext(ctx, sqlSelectWaitingSessionForContact, sessionType, contact.ID())
 	if err != nil {
 		return nil, fmt.Errorf("error selecting waiting session: %w", err)
 	}
@@ -780,12 +766,13 @@ func FindWaitingSessionForContact(ctx context.Context, db *sqlx.DB, st storage.S
 		if err != nil {
 			return nil, fmt.Errorf("error parsing output URL: %s: %w", session.OutputURL(), err)
 		}
+		key := strings.TrimPrefix(u.Path, "/")
 
 		start := time.Now()
 
-		_, output, err := st.Get(ctx, u.Path)
+		_, output, err := rt.S3.GetObject(ctx, rt.Config.S3SessionsBucket, key)
 		if err != nil {
-			return nil, fmt.Errorf("error reading session from storage: %s: %w", session.OutputURL(), err)
+			return nil, fmt.Errorf("error reading session from s3 bucket=%s key=%s: %w", rt.Config.S3SessionsBucket, key, err)
 		}
 
 		slog.Debug("loaded session from storage", "elapsed", time.Since(start), "output_url", session.OutputURL())
@@ -800,16 +787,18 @@ func FindWaitingSessionForContact(ctx context.Context, db *sqlx.DB, st storage.S
 func WriteSessionOutputsToStorage(ctx context.Context, rt *runtime.Runtime, sessions []*Session) error {
 	start := time.Now()
 
-	uploads := make([]*storage.Upload, len(sessions))
+	uploads := make([]*s3x.Upload, len(sessions))
 	for i, s := range sessions {
-		uploads[i] = &storage.Upload{
-			Path:        s.StoragePath(),
+		uploads[i] = &s3x.Upload{
+			Bucket:      rt.Config.S3SessionsBucket,
+			Key:         s.StoragePath(),
 			Body:        []byte(s.Output()),
 			ContentType: "application/json",
+			ACL:         types.ObjectCannedACLPrivate,
 		}
 	}
 
-	err := rt.SessionStorage.BatchPut(ctx, uploads)
+	err := rt.S3.BatchPut(ctx, uploads, 32)
 	if err != nil {
 		return fmt.Errorf("error writing sessions to storage: %w", err)
 	}
@@ -850,7 +839,7 @@ func ExitSessions(ctx context.Context, db *sqlx.DB, sessionIDs []SessionID, stat
 	}
 
 	// split into batches and exit each batch in a transaction
-	for _, idBatch := range ChunkSlice(sessionIDs, 100) {
+	for idBatch := range slices.Chunk(sessionIDs, 100) {
 		tx, err := db.BeginTxx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("error starting transaction to exit sessions: %w", err)

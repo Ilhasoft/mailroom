@@ -27,7 +27,7 @@ func TestBroadcastCreated(t *testing.T) {
 		{
 			Actions: handlers.ContactActionMap{
 				testdata.Cathy: []flows.Action{
-					actions.NewSendBroadcast(handlers.NewActionUUID(), "hello world", nil, nil, []urns.URN{urns.URN("tel:+12065551212")}, nil, nil, nil),
+					actions.NewSendBroadcast(handlers.NewActionUUID(), "hello world", nil, nil, nil, nil, "", []urns.URN{urns.URN("tel:+12065551212")}, nil),
 				},
 			},
 			SQLAssertions: []handlers.SQLAssertion{
@@ -42,7 +42,7 @@ func TestBroadcastCreated(t *testing.T) {
 					rc := rt.RP.Get()
 					defer rc.Close()
 
-					task, err := tasks.HandlerQueue.Pop(rc)
+					task, err := tasks.BatchQueue.Pop(rc)
 					assert.NoError(t, err)
 					assert.NotNil(t, task)
 					bcast := models.Broadcast{}
@@ -51,6 +51,7 @@ func TestBroadcastCreated(t *testing.T) {
 					assert.Nil(t, bcast.ContactIDs)
 					assert.Nil(t, bcast.GroupIDs)
 					assert.Equal(t, 1, len(bcast.URNs))
+					assert.False(t, bcast.Expressions) // engine already evaluated expressions
 					return nil
 				},
 			},

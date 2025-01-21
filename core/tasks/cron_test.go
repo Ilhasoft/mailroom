@@ -1,10 +1,15 @@
 package tasks_test
 
 import (
+	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/nyaruka/mailroom/core/tasks"
+	"github.com/nyaruka/mailroom/runtime"
+	"github.com/nyaruka/mailroom/testsuite"
+	"github.com/nyaruka/redisx/assertredis"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -25,4 +30,49 @@ func TestNextFire(t *testing.T) {
 		actual := tasks.CronNext(tc.last, tc.interval)
 		assert.Equal(t, tc.expected, actual, "next fire mismatch for %s + %s", tc.last, tc.interval)
 	}
+}
+
+type TestCron struct {
+	ran bool
+}
+
+func (c *TestCron) Next(last time.Time) time.Time {
+	return tasks.CronNext(last, time.Minute*5)
+}
+
+func (c *TestCron) AllInstances() bool {
+	return false
+}
+
+func (c *TestCron) Run(ctx context.Context, rt *runtime.Runtime) (map[string]any, error) {
+	c.ran = true
+	return map[string]any{"foo": 123}, nil
+}
+
+func TestCronStats(t *testing.T) {
+	_, rt := testsuite.Runtime()
+	rc := rt.RP.Get()
+	defer rc.Close()
+
+	defer testsuite.Reset(testsuite.ResetRedis)
+
+	cron := &TestCron{}
+	tasks.RegisterCron("test1", cron)
+
+	wg := &sync.WaitGroup{}
+	quit := make(chan bool)
+
+	tasks.StartCrons(rt, wg, quit)
+
+	for !cron.ran {
+		time.Sleep(time.Millisecond * 10)
+	}
+
+	assertredis.Exists(t, rc, "cron_stats:last_start")
+	assertredis.Exists(t, rc, "cron_stats:last_time")
+	assertredis.HGet(t, rc, "cron_stats:last_result", "test1", `{"foo":123}`)
+	assertredis.HGet(t, rc, "cron_stats:call_count", "test1", "1")
+	assertredis.Exists(t, rc, "cron_stats:total_time")
+
+	close(quit)
 }

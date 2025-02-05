@@ -17,6 +17,7 @@ FROM gcr.io/distroless/base-debian12
 WORKDIR /app
 
 COPY --from=builder bin/mailroom ./
+COPY --from=builder /src/docs ./docs
 
 EXPOSE 8090
 ENTRYPOINT ["./mailroom"]

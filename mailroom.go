@@ -102,7 +102,7 @@ func (mr *Mailroom) Start() error {
 	}
 
 	// setup DynamoDB
-	mr.rt.Dynamo, err = dynamo.NewService(c.AWSAccessKeyID, c.AWSSecretAccessKey, c.AWSRegion, c.DynamoEndpoint, c.DynamoTablePrefix)
+	mr.rt.Dynamo, err = dynamo.NewService(c.AWSAccessKeyID, c.AWSSecretAccessKey, c.DynamoRegion, c.DynamoEndpoint, c.DynamoTablePrefix)
 	if err != nil {
 		return err
 	}

@@ -86,7 +86,7 @@ func Runtime() (context.Context, *runtime.Runtime) {
 	cfg.DynamoEndpoint = "http://localhost:6000"
 	cfg.DynamoTablePrefix = "Test"
 
-	dyna, err := dynamo.NewService(cfg.AWSAccessKeyID, cfg.AWSSecretAccessKey, cfg.AWSRegion, cfg.DynamoEndpoint, cfg.DynamoTablePrefix)
+	dyna, err := dynamo.NewService(cfg.AWSAccessKeyID, cfg.AWSSecretAccessKey, cfg.DynamoRegion, cfg.DynamoEndpoint, cfg.DynamoTablePrefix)
 	noError(err)
 
 	s3svc, err := s3x.NewService(cfg.AWSAccessKeyID, cfg.AWSSecretAccessKey, cfg.AWSRegion, cfg.S3Endpoint, cfg.S3Minio)

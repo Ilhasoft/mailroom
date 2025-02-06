@@ -1,3 +1,7 @@
+1.4.20-mailroom-10.0.0
+----------
+ * Add dynamodb aws region config variable
+
 1.4.19-mailroom-10.0.0
 ----------
  * update mailroom to 10.0.0 

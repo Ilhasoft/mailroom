@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/mailroom/utils/queues"
@@ -16,14 +17,14 @@ import (
 type Foreman struct {
 	rt               *runtime.Runtime
 	wg               *sync.WaitGroup
-	queue            *queues.FairSorted
+	queue            queues.Fair
 	workers          []*Worker
 	availableWorkers chan *Worker
 	quit             chan bool
 }
 
 // NewForeman creates a new Foreman for the passed in server with the number of max workers
-func NewForeman(rt *runtime.Runtime, wg *sync.WaitGroup, q *queues.FairSorted, maxWorkers int) *Foreman {
+func NewForeman(rt *runtime.Runtime, wg *sync.WaitGroup, q queues.Fair, maxWorkers int) *Foreman {
 	foreman := &Foreman{
 		rt:               rt,
 		wg:               wg,
@@ -160,10 +161,10 @@ func (w *Worker) handleTask(task *queues.Task) {
 
 	defer func() {
 		// catch any panics and recover
-		panicLog := recover()
-		if panicLog != nil {
+		if panicVal := recover(); panicVal != nil {
 			debug.PrintStack()
-			log.Error("panic handling task", "panic", panicLog, "task", string(task.Task))
+
+			sentry.CurrentHub().Recover(panicVal)
 		}
 
 		// mark our task as complete

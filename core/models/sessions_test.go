@@ -42,7 +42,7 @@ func TestSessionCreationAndUpdating(t *testing.T) {
 		return nil
 	}
 
-	modelSessions, err := models.InsertSessions(ctx, rt, tx, oa, []flows.Session{flowSession}, []flows.Sprint{sprint1}, []*models.Contact{modelContact}, hook)
+	modelSessions, err := models.InsertSessions(ctx, rt, tx, oa, []flows.Session{flowSession}, []flows.Sprint{sprint1}, []*models.Contact{modelContact}, hook, models.NilStartID)
 	require.NoError(t, err)
 	assert.Equal(t, 1, hookCalls)
 
@@ -153,7 +153,7 @@ func TestSingleSprintSession(t *testing.T) {
 		return nil
 	}
 
-	modelSessions, err := models.InsertSessions(ctx, rt, tx, oa, []flows.Session{flowSession}, []flows.Sprint{sprint1}, []*models.Contact{modelContact}, hook)
+	modelSessions, err := models.InsertSessions(ctx, rt, tx, oa, []flows.Session{flowSession}, []flows.Sprint{sprint1}, []*models.Contact{modelContact}, hook, models.NilStartID)
 	require.NoError(t, err)
 	assert.Equal(t, 1, hookCalls)
 
@@ -193,6 +193,8 @@ func TestSessionWithSubflows(t *testing.T) {
 	sa, flowSession, sprint1 := test.NewSessionBuilder().WithAssets(oa.SessionAssets()).WithFlow(parent.UUID).
 		WithContact(testdata.Cathy.UUID, flows.ContactID(testdata.Cathy.ID), "Cathy", "eng", "").MustBuild()
 
+	startID := testdata.InsertFlowStart(rt, testdata.Org1, testdata.Admin, parent, []*testdata.Contact{testdata.Cathy})
+
 	tx := rt.DB.MustBegin()
 
 	hookCalls := 0
@@ -201,7 +203,7 @@ func TestSessionWithSubflows(t *testing.T) {
 		return nil
 	}
 
-	modelSessions, err := models.InsertSessions(ctx, rt, tx, oa, []flows.Session{flowSession}, []flows.Sprint{sprint1}, []*models.Contact{modelContact}, hook)
+	modelSessions, err := models.InsertSessions(ctx, rt, tx, oa, []flows.Session{flowSession}, []flows.Sprint{sprint1}, []*models.Contact{modelContact}, hook, startID)
 	require.NoError(t, err)
 	assert.Equal(t, 1, hookCalls)
 
@@ -220,6 +222,10 @@ func TestSessionWithSubflows(t *testing.T) {
 	assert.NotNil(t, session.WaitExpiresOn())
 	assert.True(t, session.WaitResumeOnExpire()) // because we have a parent
 	assert.Nil(t, session.Timeout())
+
+	require.Len(t, session.Runs(), 2)
+	assert.Equal(t, startID, session.Runs()[0].StartID)
+	assert.Equal(t, models.NilStartID, session.Runs()[1].StartID)
 
 	// check that matches what is in the db
 	assertdb.Query(t, rt.DB, `SELECT status, session_type, current_flow_id, responded, ended_on, wait_resume_on_expire FROM flows_flowsession`).
@@ -274,7 +280,7 @@ func TestSessionFailedStart(t *testing.T) {
 		return nil
 	}
 
-	modelSessions, err := models.InsertSessions(ctx, rt, tx, oa, []flows.Session{flowSession}, []flows.Sprint{sprint1}, []*models.Contact{modelContact}, hook)
+	modelSessions, err := models.InsertSessions(ctx, rt, tx, oa, []flows.Session{flowSession}, []flows.Sprint{sprint1}, []*models.Contact{modelContact}, hook, models.NilStartID)
 	require.NoError(t, err)
 	assert.Equal(t, 1, hookCalls)
 
@@ -474,7 +480,7 @@ func TestClearWaitTimeout(t *testing.T) {
 	timeoutOn := time.Now().Add(time.Minute)
 	testdata.InsertWaitingSession(rt, testdata.Org1, testdata.Cathy, models.FlowTypeMessaging, testdata.Favorites, models.NilCallID, time.Now(), expiresOn, true, &timeoutOn)
 
-	session, err := models.FindWaitingSessionForContact(ctx, rt.DB, nil, oa, models.FlowTypeMessaging, cathy)
+	session, err := models.FindWaitingSessionForContact(ctx, rt, oa, models.FlowTypeMessaging, cathy)
 	require.NoError(t, err)
 
 	// can be called without db connection to clear without updating db

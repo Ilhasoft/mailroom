@@ -17,11 +17,10 @@ var AuthGroupIDs = map[string]int{
 }
 
 var Org1 = &Org{1, "bf0514a5-9407-44c9-b0f9-3f36f9c18414"}
-var Admin = &User{3, "admin1@nyaruka.com"}
-var Editor = &User{4, "editor1@nyaruka.com"}
-var Viewer = &User{5, "viewer1@nyaruka.com"}
-var Agent = &User{6, "agent1@nyaruka.com"}
-var Surveyor = &User{7, "surveyor1@nyaruka.com"}
+var Admin = &User{3, "admin1@textit.com"}
+var Editor = &User{4, "editor1@textit.com"}
+var Viewer = &User{5, "viewer1@textit.com"}
+var Agent = &User{6, "agent1@textit.com"}
 
 var TwilioChannel = &Channel{10000, "74729f45-7f29-4868-9dc4-90e491e3c7d8", "T"}
 var VonageChannel = &Channel{10001, "19012bfd-3ce3-4cae-9bb9-76cf92c73d49", "NX"}
@@ -63,12 +62,12 @@ var TestingLabel = &Label{10001, "a6338cdc-7938-4437-8b05-2d5d785e3a08"}
 var ReviveTemplate = &Template{10000, "9c22b594-fcab-4b29-9bcb-ce4404894a80"}
 var GoodbyeTemplate = &Template{10001, "3b8dd151-1a91-411f-90cb-dd9065bb7a71"}
 
-var DefaultTopic = &Topic{1, "fd18a69d-7514-4b76-9fad-072641995e17"}
+var DefaultTopic = &Topic{1, "4307df2e-b00b-42b6-922b-4a1dcfc268d8"}
 var SalesTopic = &Topic{2, "9ef2ff21-064a-41f1-8560-ccc990b4f937"}
 var SupportTopic = &Topic{3, "0a8f2e00-fef6-402c-bd79-d789446ec0e0"}
 
-var Partners = &Team{1, "4321c30b-b596-46fa-adb4-4a46d37923f6"}
-var Office = &Team{2, "f14c1762-d38b-4072-ae63-2705332a3719"}
+var Partners = &Team{2, "4321c30b-b596-46fa-adb4-4a46d37923f6"}
+var Office = &Team{3, "f14c1762-d38b-4072-ae63-2705332a3719"}
 
 var Luis = &Classifier{1, "097e026c-ae79-4740-af67-656dbedf0263"}
 var Wit = &Classifier{2, "ff2a817c-040a-4eb2-8404-7d92e8b79dd0"}
@@ -81,7 +80,7 @@ var RemindersEvent3 = &CampaignEvent{10002, "3e4f06c2-e04f-47ca-a047-f5252b3160e
 
 // secondary org.. only a few things
 var Org2 = &Org{2, "3ae7cdeb-fd96-46e5-abc4-a4622f349921"}
-var Org2Admin = &User{8, "admin2@nyaruka.com"}
+var Org2Admin = &User{8, "admin2@textit.com"}
 var Org2Channel = &Channel{20000, "a89bc872-3763-4b95-91d9-31d4e56c6651", "T"}
 var Org2Contact = &Contact{20000, "26d20b72-f7d8-44dc-87f2-aae046dbff95", "tel:+250700000005", 20000}
 var Org2Favorites = &Flow{20000, "f161bd16-3c60-40bd-8c92-228ce815b9cd"}

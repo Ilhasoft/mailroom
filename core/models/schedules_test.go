@@ -20,8 +20,8 @@ func TestNewSchedule(t *testing.T) {
 
 	oa := testdata.Org1.Load(rt)
 
-	dates.SetNowSource(dates.NewFixedNowSource(time.Date(2024, 6, 20, 14, 30, 0, 0, time.UTC)))
-	defer dates.SetNowSource(dates.DefaultNowSource)
+	dates.SetNowFunc(dates.NewFixedNow(time.Date(2024, 6, 20, 14, 30, 0, 0, time.UTC)))
+	defer dates.SetNowFunc(time.Now)
 
 	_, err := models.NewSchedule(oa, time.Date(2024, 6, 20, 14, 46, 30, 0, time.UTC), "Z", "")
 	assert.EqualError(t, err, "invalid repeat period: Z")

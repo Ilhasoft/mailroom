@@ -20,6 +20,10 @@ type Contact struct {
 	URNID models.URNID
 }
 
+func (c *Contact) Reference() *flows.ContactReference {
+	return &flows.ContactReference{UUID: c.UUID, Name: ""}
+}
+
 func (c *Contact) Load(rt *runtime.Runtime, oa *models.OrgAssets) (*models.Contact, *flows.Contact, []*models.ContactURN) {
 	ctx := context.Background()
 

@@ -36,10 +36,43 @@ func (t *StartFlowBatchTask) WithAssets() models.Refresh {
 }
 
 func (t *StartFlowBatchTask) Perform(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets) error {
+	var start *models.FlowStart
+	var err error
+
+	// if this batch belongs to a persisted start, fetch it
+	if t.StartID != models.NilStartID {
+		start, err = models.GetFlowStartByID(ctx, rt.DB, t.StartID)
+		if err != nil {
+			return fmt.Errorf("error loading flow start for batch: %w", err)
+		}
+	} else {
+		start = t.Start // otherwise use start from the task
+	}
+
+	// if this start was interrupted, we're done
+	if start.Status == models.StartStatusInterrupted {
+		return nil
+	}
+
+	// if this is our first batch, mark as started
+	if t.IsFirst {
+		if err := start.SetStarted(ctx, rt.DB); err != nil {
+			return fmt.Errorf("error marking start as started: %w", err)
+		}
+	}
+
 	// start these contacts in our flow
-	_, err := runner.StartFlowBatch(ctx, rt, oa, t.FlowStartBatch)
+	_, err = runner.StartFlowBatch(ctx, rt, oa, start, t.FlowStartBatch)
 	if err != nil {
 		return fmt.Errorf("error starting flow batch: %w", err)
 	}
+
+	// if this is our last batch, mark start as done
+	if t.IsLast {
+		if err := start.SetCompleted(ctx, rt.DB); err != nil {
+			return fmt.Errorf("error marking start as complete: %w", err)
+		}
+	}
+
 	return nil
 }

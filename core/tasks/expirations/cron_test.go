@@ -1,12 +1,15 @@
 package expirations_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/nyaruka/gocommon/dbutil/assertdb"
 	"github.com/nyaruka/gocommon/i18n"
 	"github.com/nyaruka/gocommon/jsonx"
+	"github.com/nyaruka/gocommon/uuids"
+	"github.com/nyaruka/goflow/flows"
 	_ "github.com/nyaruka/mailroom/core/handlers"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/core/tasks"
@@ -50,13 +53,17 @@ func TestExpirations(t *testing.T) {
 	r6ID := testdata.InsertFlowRun(rt, testdata.Org1, s5ID, blake, testdata.Favorites, models.RunStatusActive, "")
 	r7ID := testdata.InsertFlowRun(rt, testdata.Org1, s5ID, blake, testdata.Favorites, models.RunStatusWaiting, "")
 
-	time.Sleep(5 * time.Millisecond)
+	// for other org create 6 waiting sessions that will expire
+	for i := range 6 {
+		c := testdata.InsertContact(rt, testdata.Org2, flows.ContactUUID(uuids.NewV4()), fmt.Sprint(i), i18n.NilLanguage, models.ContactStatusActive)
+		testdata.InsertWaitingSession(rt, testdata.Org2, c, models.FlowTypeMessaging, testdata.Favorites, models.NilCallID, time.Now(), time.Now(), true, nil)
+	}
 
 	// expire our sessions...
-	cron := expirations.NewExpirationsCron()
+	cron := expirations.NewExpirationsCron(3, 5)
 	res, err := cron.Run(ctx, rt)
 	assert.NoError(t, err)
-	assert.Equal(t, map[string]any{"dupes": 0, "expired": 1, "queued": 2}, res)
+	assert.Equal(t, map[string]any{"exited": 1, "dupes": 0, "queued_bulk": 6, "queued_handler": 2}, res)
 
 	// Cathy's session should be expired along with its runs
 	assertdb.Query(t, rt.DB, `SELECT status FROM flows_flowsession WHERE id = $1;`, s1ID).Columns(map[string]any{"status": "X"})
@@ -80,29 +87,43 @@ func TestExpirations(t *testing.T) {
 	assertdb.Query(t, rt.DB, `SELECT status FROM flows_flowrun WHERE id = $1;`, r6ID).Columns(map[string]any{"status": "A"})
 	assertdb.Query(t, rt.DB, `SELECT status FROM flows_flowrun WHERE id = $1;`, r7ID).Columns(map[string]any{"status": "W"})
 
-	// should have created two expiration tasks
-	task, err := tasks.HandlerQueue.Pop(rc)
+	// should have created two handler tasks for org 1
+	task1, err := tasks.HandlerQueue.Pop(rc)
 	assert.NoError(t, err)
-	assert.NotNil(t, task)
+	assert.Equal(t, int(testdata.Org1.ID), task1.OwnerID)
+	assert.Equal(t, "handle_contact_event", task1.Type)
+	task2, err := tasks.HandlerQueue.Pop(rc)
+	assert.NoError(t, err)
+	assert.Equal(t, int(testdata.Org1.ID), task2.OwnerID)
+	assert.Equal(t, "handle_contact_event", task2.Type)
 
-	// check the first task
+	// decode the tasks to check contacts
 	eventTask := &handler.HandleContactEventTask{}
-	jsonx.MustUnmarshal(task.Task, eventTask)
+	jsonx.MustUnmarshal(task1.Task, eventTask)
 	assert.Equal(t, testdata.George.ID, eventTask.ContactID)
-
-	task, err = tasks.HandlerQueue.Pop(rc)
-	assert.NoError(t, err)
-	assert.NotNil(t, task)
-
-	// check the second task
 	eventTask = &handler.HandleContactEventTask{}
-	jsonx.MustUnmarshal(task.Task, eventTask)
+	jsonx.MustUnmarshal(task2.Task, eventTask)
 	assert.Equal(t, blake.ID, eventTask.ContactID)
 
-	// no other tasks
-	task, err = tasks.HandlerQueue.Pop(rc)
+	// no other
+	task, err := tasks.HandlerQueue.Pop(rc)
 	assert.NoError(t, err)
 	assert.Nil(t, task)
+
+	// should have created two throttled bulk tasks for org 2
+	task3, err := tasks.ThrottledQueue.Pop(rc)
+	assert.NoError(t, err)
+	assert.Equal(t, int(testdata.Org2.ID), task3.OwnerID)
+	assert.Equal(t, "bulk_expire", task3.Type)
+	task4, err := tasks.ThrottledQueue.Pop(rc)
+	assert.NoError(t, err)
+	assert.Equal(t, int(testdata.Org2.ID), task4.OwnerID)
+	assert.Equal(t, "bulk_expire", task4.Type)
+
+	// if task runs again, these tasks won't be re-queued
+	res, err = cron.Run(ctx, rt)
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]any{"exited": 0, "dupes": 8, "queued_handler": 0, "queued_bulk": 0}, res)
 }
 
 func TestExpireVoiceSessions(t *testing.T) {

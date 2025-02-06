@@ -20,7 +20,6 @@ func TestLoadUsers(t *testing.T) {
 	require.NoError(t, err)
 
 	partners := &models.Team{testdata.Partners.ID, testdata.Partners.UUID, "Partners"}
-	office := &models.Team{testdata.Office.ID, testdata.Office.UUID, "Office"}
 
 	expectedUsers := []struct {
 		id    models.UserID
@@ -29,10 +28,9 @@ func TestLoadUsers(t *testing.T) {
 		role  models.UserRole
 		team  *models.Team
 	}{
-		{id: testdata.Admin.ID, email: testdata.Admin.Email, name: "Andy Admin", role: models.UserRoleAdministrator, team: office},
+		{id: testdata.Admin.ID, email: testdata.Admin.Email, name: "Andy Admin", role: models.UserRoleAdministrator, team: nil},
 		{id: testdata.Agent.ID, email: testdata.Agent.Email, name: "Ann D'Agent", role: models.UserRoleAgent, team: partners},
-		{id: testdata.Editor.ID, email: testdata.Editor.Email, name: "Ed McEditor", role: models.UserRoleEditor, team: office},
-		{id: testdata.Surveyor.ID, email: testdata.Surveyor.Email, name: "Steve Surveys", role: models.UserRoleSurveyor, team: nil},
+		{id: testdata.Editor.ID, email: testdata.Editor.Email, name: "Ed McEditor", role: models.UserRoleEditor, team: nil},
 		{id: testdata.Viewer.ID, email: testdata.Viewer.Email, name: "Veronica Views", role: models.UserRoleViewer, team: nil},
 	}
 

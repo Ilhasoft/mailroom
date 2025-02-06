@@ -386,9 +386,9 @@ func TestGetMsgRepetitions(t *testing.T) {
 	defer rc.Close()
 
 	defer testsuite.Reset(testsuite.ResetRedis)
-	defer dates.SetNowSource(dates.DefaultNowSource)
+	defer dates.SetNowFunc(time.Now)
 
-	dates.SetNowSource(dates.NewFixedNowSource(time.Date(2021, 11, 18, 12, 13, 3, 234567, time.UTC)))
+	dates.SetNowFunc(dates.NewFixedNow(time.Date(2021, 11, 18, 12, 13, 3, 234567, time.UTC)))
 
 	oa := testdata.Org1.Load(rt)
 	_, cathy, _ := testdata.Cathy.Load(rt, oa)
@@ -626,7 +626,7 @@ func insertTestSession(t *testing.T, ctx context.Context, rt *runtime.Runtime, o
 
 	_, flowContact, _ := contact.Load(rt, oa)
 
-	session, err := models.FindWaitingSessionForContact(ctx, rt.DB, rt.SessionStorage, oa, models.FlowTypeMessaging, flowContact)
+	session, err := models.FindWaitingSessionForContact(ctx, rt, oa, models.FlowTypeMessaging, flowContact)
 	require.NoError(t, err)
 
 	return session

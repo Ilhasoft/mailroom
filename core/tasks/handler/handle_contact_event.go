@@ -9,14 +9,12 @@ import (
 
 	"github.com/gomodule/redigo/redis"
 	"github.com/jmoiron/sqlx"
-	"github.com/nyaruka/gocommon/analytics"
 	"github.com/nyaruka/gocommon/dbutil"
 	"github.com/nyaruka/gocommon/jsonx"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/core/tasks/ivr"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/nyaruka/mailroom/utils/queues"
 )
 
 // TypeHandleContactEvent is the task type for flagging that a contact has handler tasks to be handled
@@ -57,7 +55,7 @@ func (t *HandleContactEventTask) Perform(ctx context.Context, rt *runtime.Runtim
 	if len(locks) == 0 {
 		rc := rt.RP.Get()
 		defer rc.Close()
-		err = tasks.Queue(rc, tasks.HandlerQueue, oa.OrgID(), &HandleContactEventTask{ContactID: t.ContactID}, queues.DefaultPriority)
+		err = tasks.Queue(rc, tasks.HandlerQueue, oa.OrgID(), &HandleContactEventTask{ContactID: t.ContactID}, false)
 		if err != nil {
 			return fmt.Errorf("error re-adding contact task after failing to get lock: %w", err)
 		}
@@ -99,11 +97,8 @@ func (t *HandleContactEventTask) Perform(ctx context.Context, rt *runtime.Runtim
 
 		err = performHandlerTask(ctx, rt, oa, t.ContactID, ctask)
 
-		// log our processing time to librato
-		analytics.Gauge(fmt.Sprintf("mr.%s_elapsed", taskPayload.Type), float64(time.Since(start))/float64(time.Second))
-
-		// and total latency for this task since it was queued
-		analytics.Gauge(fmt.Sprintf("mr.%s_latency", taskPayload.Type), float64(time.Since(taskPayload.QueuedOn))/float64(time.Second))
+		// record metrics
+		rt.Stats.RecordHandlerTask(time.Since(start), time.Since(taskPayload.QueuedOn))
 
 		// if we get an error processing an event, requeue it for later and return our error
 		if err != nil {
@@ -181,12 +176,12 @@ func TriggerIVRFlow(ctx context.Context, rt *runtime.Runtime, orgID models.OrgID
 	}
 
 	// create our batch of all our contacts
-	task := &ivr.StartIVRFlowBatchTask{FlowStartBatch: start.CreateBatch(contactIDs, models.FlowTypeVoice, true, len(contactIDs))}
+	task := &ivr.StartIVRFlowBatchTask{FlowStartBatch: start.CreateBatch(contactIDs, true, true, len(contactIDs))}
 
 	// queue this to our ivr starter, it will take care of creating the calls then calling back in
 	rc := rt.RP.Get()
 	defer rc.Close()
-	err = tasks.Queue(rc, tasks.BatchQueue, orgID, task, queues.HighPriority)
+	err = tasks.Queue(rc, tasks.BatchQueue, orgID, task, true)
 	if err != nil {
 		return fmt.Errorf("error queuing ivr flow start: %w", err)
 	}

@@ -8,23 +8,23 @@ import (
 	"github.com/nyaruka/gocommon/jsonx"
 	"github.com/nyaruka/goflow/flows/events"
 	"github.com/nyaruka/mailroom/core/models"
+	"github.com/nyaruka/mailroom/core/tasks"
+	"github.com/nyaruka/mailroom/core/tasks/starts"
 	"github.com/nyaruka/mailroom/runtime"
 )
 
-// InsertStartHook is our hook to fire insert our starts
-var InsertStartHook models.EventCommitHook = &insertStartHook{}
+// CreateStartsHook is our hook to fire our scene starts
+var CreateStartsHook models.EventCommitHook = &createStartsHook{}
 
-type insertStartHook struct{}
+type createStartsHook struct{}
 
-// Apply inserts our starts
-func (h *insertStartHook) Apply(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *models.OrgAssets, scenes map[*models.Scene][]any) error {
+// Apply queues up our flow starts
+func (h *createStartsHook) Apply(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *models.OrgAssets, scenes map[*models.Scene][]any) error {
 	rc := rt.RP.Get()
 	defer rc.Close()
 
-	starts := make([]*models.FlowStart, 0, len(scenes))
-
 	// for each of our scene
-	for s, es := range scenes {
+	for _, es := range scenes {
 		for _, e := range es {
 			event := e.(*events.SessionTriggeredEvent)
 
@@ -66,17 +66,18 @@ func (h *insertStartHook) Apply(ctx context.Context, rt *runtime.Runtime, tx *sq
 				WithParentSummary(event.RunSummary).
 				WithSessionHistory(historyJSON)
 
-			starts = append(starts, start)
+			// TODO find another way to pass start info to new calls
+			if flow.FlowType() == models.FlowTypeVoice {
+				if err := models.InsertFlowStarts(ctx, tx, []*models.FlowStart{start}); err != nil {
+					return fmt.Errorf("error inserting flow start: %w", err)
+				}
+			}
 
-			// this will add our task for our start after we commit
-			s.AppendToEventPostCommitHook(StartStartHook, start)
+			err = tasks.Queue(rc, tasks.BatchQueue, oa.OrgID(), &starts.StartFlowTask{FlowStart: start}, false)
+			if err != nil {
+				return fmt.Errorf("error queuing flow start: %w", err)
+			}
 		}
-	}
-
-	// insert all our starts
-	err := models.InsertFlowStarts(ctx, tx, starts)
-	if err != nil {
-		return fmt.Errorf("error inserting flow starts for scene triggers: %w", err)
 	}
 
 	return nil

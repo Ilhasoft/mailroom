@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
 	"github.com/jmoiron/sqlx"
-	"github.com/nyaruka/gocommon/analytics"
 	"github.com/nyaruka/goflow/assets"
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/goflow/flows/triggers"
@@ -18,7 +18,6 @@ import (
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/core/tasks/handler"
 	"github.com/nyaruka/mailroom/runtime"
-	"golang.org/x/exp/maps"
 )
 
 // TypeFireCampaignEvent is the type of the fire event task
@@ -118,8 +117,6 @@ func (t *FireCampaignEventTask) Perform(ctx context.Context, rt *runtime.Runtime
 
 // FireCampaignEvents tries to handle the given event fires, returning those that were handled (i.e. skipped, fired or deleted)
 func FireCampaignEvents(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, fires []*models.EventFire, flowUUID assets.FlowUUID, campaign *triggers.CampaignReference, eventUUID triggers.CampaignEventUUID) ([]*models.EventFire, error) {
-	start := time.Now()
-
 	// get the capmaign event object
 	dbEvent := oa.CampaignEventByID(fires[0].EventID)
 	if dbEvent == nil {
@@ -173,18 +170,19 @@ func FireCampaignEvents(ctx context.Context, rt *runtime.Runtime, oa *models.Org
 	}
 
 	// mark the skipped fires as skipped and record as handled
-	err = models.MarkEventsFired(ctx, rt.DB, maps.Values(firesToSkip), time.Now(), models.FireResultSkipped)
+	skipped := slices.Collect(maps.Values(firesToSkip))
+	err = models.MarkEventsFired(ctx, rt.DB, skipped, time.Now(), models.FireResultSkipped)
 	if err != nil {
 		return nil, fmt.Errorf("error marking events skipped: %w", err)
 	}
 
-	handled := maps.Values(firesToSkip)
+	handled := skipped
 
 	// if this is an ivr flow, we need to create a task to perform the start there
 	if dbFlow.FlowType() == models.FlowTypeVoice {
-		fired := maps.Values(firesToFire)
+		fired := slices.Collect(maps.Values(firesToFire))
 
-		err := handler.TriggerIVRFlow(ctx, rt, oa.OrgID(), dbFlow.ID(), maps.Keys(firesToFire), func(ctx context.Context, tx *sqlx.Tx) error {
+		err := handler.TriggerIVRFlow(ctx, rt, oa.OrgID(), dbFlow.ID(), slices.Collect(maps.Keys(firesToFire)), func(ctx context.Context, tx *sqlx.Tx) error {
 			return models.MarkEventsFired(ctx, tx, fired, time.Now(), models.FireResultFired)
 		})
 		if err != nil {
@@ -226,14 +224,10 @@ func FireCampaignEvents(ctx context.Context, rt *runtime.Runtime, oa *models.Org
 		CommitHook: markFired,
 	}
 
-	_, err = runner.StartFlow(ctx, rt, oa, dbFlow, maps.Keys(firesToFire), options)
+	_, err = runner.StartFlow(ctx, rt, oa, dbFlow, slices.Collect(maps.Keys(firesToFire)), options, models.NilStartID)
 	if err != nil {
 		slog.Error("error starting flow for campaign event", "error", err, "event", eventUUID)
 	}
-
-	// log both our total and average
-	analytics.Gauge("mr.campaign_event_elapsed", float64(time.Since(start))/float64(time.Second))
-	analytics.Gauge("mr.campaign_event_count", float64(len(handled)))
 
 	return handled, nil
 }

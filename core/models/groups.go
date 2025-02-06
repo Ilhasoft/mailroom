@@ -27,9 +27,12 @@ const (
 type GroupType string
 
 const (
-	GroupTypeManual    = GroupType("M")
-	GroupTypeSmart     = GroupType("Q")
-	GroupTypeDBStopped = GroupType("S")
+	GroupTypeDBActive   = GroupType("A")
+	GroupTypeDBBlocked  = GroupType("B")
+	GroupTypeDBStopped  = GroupType("S")
+	GroupTypeDBArchived = GroupType("V")
+	GroupTypeManual     = GroupType("M")
+	GroupTypeSmart      = GroupType("Q")
 )
 
 // Group is our mailroom type for contact groups
@@ -59,6 +62,9 @@ func (g *Group) Status() GroupStatus { return g.Status_ }
 
 // Type returns the type of this group
 func (g *Group) Type() GroupType { return g.Type_ }
+
+// Visible returns whether this group is visible to the engine (status groups are not)
+func (g *Group) Visible() bool { return g.Type_ == GroupTypeManual || g.Type_ == GroupTypeSmart }
 
 // loads the groups for the passed in org
 func loadGroups(ctx context.Context, db *sql.DB, orgID OrgID) ([]assets.Group, error) {

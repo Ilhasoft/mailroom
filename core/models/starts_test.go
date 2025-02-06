@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/nyaruka/gocommon/dbutil/assertdb"
 	"github.com/nyaruka/gocommon/jsonx"
@@ -23,7 +24,7 @@ func TestStarts(t *testing.T) {
 
 	defer testsuite.Reset(testsuite.ResetData)
 
-	startID := testdata.InsertFlowStart(rt, testdata.Org1, testdata.SingleMessage, []*testdata.Contact{testdata.Cathy, testdata.Bob})
+	startID := testdata.InsertFlowStart(rt, testdata.Org1, testdata.Admin, testdata.SingleMessage, []*testdata.Contact{testdata.Cathy, testdata.Bob})
 
 	startJSON := []byte(fmt.Sprintf(`{
 		"start_id": %d,
@@ -62,40 +63,50 @@ func TestStarts(t *testing.T) {
 	assert.Equal(t, null.JSON(`{"parent_uuid": "532a3899-492f-4ffe-aed7-e75ad524efab", "ancestors": 3, "ancestors_since_input": 1}`), start.SessionHistory)
 	assert.Equal(t, null.JSON(`{"foo": "bar"}`), start.Params)
 
-	err = models.MarkStartStarted(ctx, rt.DB, startID, 2)
-	require.NoError(t, err)
-
-	assertdb.Query(t, rt.DB, `SELECT count(*) FROM flows_flowstart WHERE id = $1 AND status = 'S' AND contact_count = 2`, startID).Returns(1)
 	assertdb.Query(t, rt.DB, `SELECT count(*) FROM flows_flowstart_contacts WHERE flowstart_id = $1`, startID).Returns(2)
 
-	batch := start.CreateBatch([]models.ContactID{testdata.Cathy.ID, testdata.Bob.ID}, models.FlowTypeMessaging, false, 3)
+	err = start.SetQueued(ctx, rt.DB, 5)
+	require.NoError(t, err)
+	assertdb.Query(t, rt.DB, `SELECT status, contact_count FROM flows_flowstart WHERE id = $1`, startID).Columns(map[string]any{"status": "Q", "contact_count": int64(5)})
+
+	batch := start.CreateBatch([]models.ContactID{testdata.Cathy.ID, testdata.Bob.ID}, true, false, 3)
 	assert.Equal(t, startID, batch.StartID)
-	assert.Equal(t, models.StartTypeManual, batch.StartType)
-	assert.Equal(t, testdata.SingleMessage.ID, batch.FlowID)
 	assert.Equal(t, []models.ContactID{testdata.Cathy.ID, testdata.Bob.ID}, batch.ContactIDs)
-	assert.Equal(t, testdata.Admin.ID, batch.CreatedByID)
 	assert.False(t, batch.IsLast)
 	assert.Equal(t, 3, batch.TotalContacts)
 
-	assert.Equal(t, null.JSON(`{"uuid": "b65b1a22-db6d-4f5a-9b3d-7302368a82e6"}`), batch.ParentSummary)
-	assert.Equal(t, null.JSON(`{"parent_uuid": "532a3899-492f-4ffe-aed7-e75ad524efab", "ancestors": 3, "ancestors_since_input": 1}`), batch.SessionHistory)
-	assert.Equal(t, null.JSON(`{"foo": "bar"}`), batch.Params)
-
-	history, err := models.ReadSessionHistory(batch.SessionHistory)
+	history, err := models.ReadSessionHistory(start.SessionHistory)
 	assert.NoError(t, err)
 	assert.Equal(t, flows.SessionUUID("532a3899-492f-4ffe-aed7-e75ad524efab"), history.ParentUUID)
 
 	_, err = models.ReadSessionHistory([]byte(`{`))
 	assert.EqualError(t, err, "unexpected end of JSON input")
 
-	err = models.MarkStartComplete(ctx, rt.DB, startID)
+	err = start.SetStarted(ctx, rt.DB)
 	require.NoError(t, err)
+	assertdb.Query(t, rt.DB, `SELECT status FROM flows_flowstart WHERE id = $1`, startID).Returns("S")
 
-	assertdb.Query(t, rt.DB, `SELECT count(*) FROM flows_flowstart WHERE id = $1 AND status = 'C'`, startID).Returns(1)
+	err = start.SetCompleted(ctx, rt.DB)
+	require.NoError(t, err)
+	assertdb.Query(t, rt.DB, `SELECT status FROM flows_flowstart WHERE id = $1`, startID).Returns("C")
+
+	err = start.SetFailed(ctx, rt.DB)
+	require.NoError(t, err)
+	assertdb.Query(t, rt.DB, `SELECT status FROM flows_flowstart WHERE id = $1`, startID).Returns("F")
+
+	// try fetching a start from the database (won't load all fields)
+	start, err = models.GetFlowStartByID(ctx, rt.DB, start.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, startID, start.ID)
+	assert.Equal(t, testdata.Org1.ID, start.OrgID)
+	assert.Equal(t, models.StartStatusFailed, start.Status)
+	assert.Equal(t, models.StartTypeManual, start.StartType)
+	assert.Equal(t, testdata.Admin.ID, start.CreatedByID)
+	assert.Equal(t, testdata.SingleMessage.ID, start.FlowID)
 }
 
 func TestStartsBuilding(t *testing.T) {
-	uuids.SetGenerator(uuids.NewSeededGenerator(12345))
+	uuids.SetGenerator(uuids.NewSeededGenerator(12345, time.Now))
 	defer uuids.SetGenerator(uuids.DefaultGenerator)
 
 	start := models.NewFlowStart(testdata.Org1.ID, models.StartTypeManual, testdata.Favorites.ID).

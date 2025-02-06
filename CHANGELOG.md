@@ -1,3 +1,322 @@
+v10.0.0 (2025-01-07)
+-------------------------
+ * Update README.md
+
+v9.3.72 (2025-01-06)
+-------------------------
+ * Update deps including goflow and phonenumbers
+
+v9.3.71 (2024-12-18)
+-------------------------
+ * Fix integer rounding in duration metrics
+
+v9.3.70 (2024-12-18)
+-------------------------
+ * Fix initializing stats collector
+
+v9.3.69 (2024-12-18)
+-------------------------
+ * Use same approach to metrics as courier - record events in stats, convert to metrics and send every minute
+
+v9.3.68 (2024-12-16)
+-------------------------
+ * Fix cloudwatch service stopping before tasks are stopped
+
+v9.3.67 (2024-12-16)
+-------------------------
+ * Update to latest gocommon and goflow
+ * Tweak metrics cron so that instead of sleeping there is an offset added to the next time
+
+v9.3.66 (2024-12-13)
+-------------------------
+ * Convert all remaining metrics to cloudwatch
+
+v9.3.65 (2024-12-13)
+-------------------------
+ * Add cloudwatch and start sending cron times there
+
+v9.3.64 (2024-12-12)
+-------------------------
+ * Update to latest goflow
+
+v9.3.63 (2024-12-11)
+-------------------------
+ * Update to latest goflow
+
+v9.3.62 (2024-12-11)
+-------------------------
+ * Update to latest goflow
+
+v9.3.61 (2024-12-11)
+-------------------------
+ * Read outbox size check from new msg folder counts
+
+v9.3.60 (2024-12-10)
+-------------------------
+ * Stop writing flowrun.path
+
+v9.3.59 (2024-12-09)
+-------------------------
+ * Always migrate to latest patch version of flow spec
+
+v9.3.58 (2024-12-09)
+-------------------------
+ * Update goflow which has new 13.6.1 flow migration
+
+v9.3.57 (2024-12-09)
+-------------------------
+ * Update deps including goflow
+
+v9.3.56 (2024-12-05)
+-------------------------
+ * Update to latest goflow
+
+v9.3.55 (2024-12-04)
+-------------------------
+ * Start writing new flow run path fields (path_nodes and path_times)
+
+v9.3.54 (2024-12-03)
+-------------------------
+ * Update to latest goflow that adds flow spec 13.6
+
+v9.3.53 (2024-12-02)
+-------------------------
+ * Update to latest goflow
+
+v9.3.52 (2024-11-29)
+-------------------------
+ * Update to latest gocommon that fixes country parsing from phone numbers
+
+v9.3.51 (2024-11-27)
+-------------------------
+ * Start recording flow segment counts in flow activity table
+
+v9.3.50 (2024-11-20)
+-------------------------
+ * Simplify FlowRun struct
+ * Only set start_id on first run of a session
+
+v9.3.49 (2024-11-20)
+-------------------------
+ * Update deps
+ * Add task to handle throttled expirations
+
+v9.3.48 (2024-11-19)
+-------------------------
+ * Add new task to handle bulk session timeouts
+ * Create absraction for fair queues
+
+v9.3.47 (2024-11-13)
+-------------------------
+ * Update to match goflow changes to airtime transfers
+
+v9.3.46 (2024-11-05)
+-------------------------
+ * More logging for invalid locales
+ * Update deps
+
+v9.3.45 (2024-10-16)
+-------------------------
+ * Fix metrics endpoint to strip \ from group names
+ * Read user team from orgmembership instead of usersettings
+
+v9.3.44 (2024-10-07)
+-------------------------
+ * Replace status groups with status condition when searching in Elastic
+ * Don't include db-trigger maintained status groups in engine assets or contact groups
+
+v9.3.43 (2024-10-01)
+-------------------------
+ * Include flow UUID when logging URN stealing
+
+v9.3.42 (2024-10-01)
+-------------------------
+ * Update deps including goflow to get group search fix
+
+v9.3.41 (2024-09-30)
+-------------------------
+ * Log instances of flows stealing URNs
+ * Call sentry directly from panic recovery
+
+v9.3.40 (2024-09-30)
+-------------------------
+ * Include stack explicitly in panic recovery log
+
+v9.3.39 (2024-09-30)
+-------------------------
+ * Change test_errors endpoint to POST
+
+v9.3.38 (2024-09-30)
+-------------------------
+ * Make panic recovery code consistent
+ * Add endpoint for testing error handling and sentry integration
+
+v9.3.37 (2024-09-26)
+-------------------------
+ * Remove check in deindex contact for contact being inactive.. so that it can be run before deletion actually occurs
+
+v9.3.36 (2024-09-26)
+-------------------------
+ * Add endpoint to de-index specific contacts
+
+v9.3.35 (2024-09-26)
+-------------------------
+ * Add web endpoint to queue org for de-indexing
+
+v9.3.34 (2024-09-25)
+-------------------------
+ * Re-introduce queued status for broadcasts and flow starts
+
+v9.3.33 (2024-09-24)
+-------------------------
+ * Re-evaluate dynamic groups of contacts who have had URNs stolen from them
+ * Remove unused broadcast task fields
+
+v9.3.32 (2024-09-23)
+-------------------------
+ * Fix broadcast endpoint creating broadcasts with empty status
+
+v9.3.31 (2024-09-23)
+-------------------------
+ * Mark broadcasts as started once recipients are known and update contact_count
+ * Fix loading broadcasts from batch tasks
+
+v9.3.30 (2024-09-23)
+-------------------------
+ * Use broadcast field on batch tasks
+
+v9.3.29 (2024-09-22)
+-------------------------
+ * Fix trigger_session actions with IVR flows
+
+v9.3.28 (2024-09-20)
+-------------------------
+ * Add more info to error log when writing ivr channel log fails
+
+v9.3.27 (2024-09-20)
+-------------------------
+ * Add .broadcast field to broadcast batch tasks
+
+v9.3.26 (2024-09-20)
+-------------------------
+ * Add warning for non-persistent broadcasts to more than 100 contacts
+
+v9.3.25 (2024-09-19)
+-------------------------
+ * Stop creating starts in the database for trigger_session flow actions
+ * Use status=(C)OMPLETE for sent broadcasts instead of (S)ENT
+
+v9.3.24 (2024-09-19)
+-------------------------
+ * Rework broadcasts to follow more similar pattern as starts
+ * Add support for non-persisted starts
+
+v9.3.23 (2024-09-18)
+-------------------------
+ * Rework flow start batch processing so that we check the start status in case it's interrupted
+
+v9.3.22 (2024-09-18)
+-------------------------
+ * Change channel log TTL to be 1 week
+ * Stop writing channel logs to S3
+
+v9.3.21 (2024-09-17)
+-------------------------
+ * Update deps including goflow
+
+v9.3.20 (2024-09-16)
+-------------------------
+ * Tweak error messages and add temp workaround for invalid msg locales
+
+v9.3.19 (2024-09-16)
+-------------------------
+ * Rework clogs util package based on latest gocommon
+ * Fix error handling on contact batch import
+
+v9.3.18 (2024-09-16)
+-------------------------
+ * Rework clogs package to provide get/put DynamoDB operations
+
+v9.3.17 (2024-09-13)
+-------------------------
+ * Move core channel log stuff into clogs utility package we could potentially share with courier
+ * Start writing channel logs to DynamoDB
+ * Fix go version in DockerFile
+
+v9.3.16 (2024-09-12)
+-------------------------
+ * Remove old task queues
+
+v9.3.15 (2024-09-12)
+-------------------------
+ * Add new prefixed queues for batch and handler whilst retaining previous ones
+ * Remove starts queue that was replaced by tasks:throttled
+
+v9.3.14 (2024-09-12)
+-------------------------
+ * Throttle broadcasts by outbox size too
+
+v9.3.13 (2024-09-11)
+-------------------------
+ * Fix throttle queue task
+ * Update to go 1.23
+
+v9.3.12 (2024-09-10)
+-------------------------
+ * Add dedicated starts queue and a cron to throttle it based on outbox counts
+
+v9.3.11 (2024-08-22)
+-------------------------
+ * Always strip / from session object keys
+
+v9.3.10 (2024-08-22)
+-------------------------
+ * Tweak error message when loading session from S3
+
+v9.3.9 (2024-08-22)
+-------------------------
+ * Add test of dynamodb reachability to mailroom startup
+
+v9.3.8 (2024-08-22)
+-------------------------
+ * Add Dynamo client to runtime
+
+v9.3.7 (2024-08-22)
+-------------------------
+ * Delete unused test-smtp command
+ * Update to aws-sdk-go-v2
+
+v9.3.6 (2024-08-21)
+-------------------------
+ * Update to latest goflow (with phone parsing workaround)
+
+v9.3.5 (2024-08-19)
+-------------------------
+ * Fix ticket modifier test
+
+v9.3.4 (2024-08-19)
+-------------------------
+ * Update to latest goflow
+
+v9.3.3 (2024-08-08)
+-------------------------
+ * Don't try to load ticket body when loading tickets with a contact
+ * Authenticate metrics endpoint using org.prometheus_token instead of an API token
+
+v9.3.2 (2024-08-08)
+-------------------------
+ * Update test database
+ * Replace ticket bodies with notes on the open event
+
+v9.3.1 (2024-08-02)
+-------------------------
+ * Update to latest goflow/gocommon
+
+v9.3.0 (2024-07-29)
+-------------------------
+ * Add S3 to runtime, replace storages
+ * Use minio for local dev and tests
+
 v9.2.2 (2024-07-23)
 -------------------------
  * Simplify config param name to configure FCM relayer syncing

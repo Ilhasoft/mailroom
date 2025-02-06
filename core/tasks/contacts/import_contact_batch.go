@@ -74,7 +74,7 @@ func (t *ImportContactBatchTask) Perform(ctx context.Context, rt *runtime.Runtim
 	}
 
 	if batchErr != nil {
-		return fmt.Errorf("unable to import contact import batch %d: %w", t.ContactImportBatchID, err)
+		return fmt.Errorf("unable to import contact import batch %d: %w", t.ContactImportBatchID, batchErr)
 	}
 
 	return nil

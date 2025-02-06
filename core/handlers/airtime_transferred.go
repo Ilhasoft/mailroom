@@ -22,10 +22,10 @@ func init() {
 func handleAirtimeTransferred(ctx context.Context, rt *runtime.Runtime, tx *sqlx.Tx, oa *models.OrgAssets, scene *models.Scene, e flows.Event) error {
 	event := e.(*events.AirtimeTransferredEvent)
 
-	slog.Debug("airtime transferred", "contact", scene.ContactUUID(), "session", scene.SessionID(), "sender", event.Sender, "recipient", event.Recipient, "currency", event.Currency, "desired_amount", event.DesiredAmount.String(), "actual_amount", event.ActualAmount.String())
+	slog.Debug("airtime transferred", "contact", scene.ContactUUID(), "session", scene.SessionID(), "sender", event.Sender, "recipient", event.Recipient, "currency", event.Currency, "amount", event.Amount.String())
 
 	status := models.AirtimeTransferStatusSuccess
-	if event.ActualAmount == decimal.Zero {
+	if event.Amount == decimal.Zero {
 		status = models.AirtimeTransferStatusFailed
 	}
 
@@ -38,8 +38,7 @@ func handleAirtimeTransferred(ctx context.Context, rt *runtime.Runtime, tx *sqlx
 		event.Sender,
 		event.Recipient,
 		event.Currency,
-		event.DesiredAmount,
-		event.ActualAmount,
+		event.Amount,
 		event.CreatedOn(),
 	)
 

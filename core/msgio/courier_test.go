@@ -66,7 +66,7 @@ func TestNewCourierMsg(t *testing.T) {
 
 	// create a non-priority flow message.. i.e. the session isn't responding to an incoming message
 	testdata.InsertWaitingSession(rt, testdata.Org1, testdata.Cathy, models.FlowTypeMessaging, testdata.Favorites, models.NilCallID, time.Now(), time.Now(), false, nil)
-	session, err := models.FindWaitingSessionForContact(ctx, rt.DB, rt.SessionStorage, oa, models.FlowTypeMessaging, cathy)
+	session, err := models.FindWaitingSessionForContact(ctx, rt, oa, models.FlowTypeMessaging, cathy)
 	require.NoError(t, err)
 
 	msg1, err := models.NewOutgoingFlowMsg(rt, oa.Org(), facebook, session, flow, flowMsg1, time.Date(2021, 11, 9, 14, 3, 30, 0, time.UTC))
@@ -153,7 +153,7 @@ func TestNewCourierMsg(t *testing.T) {
 	// try a broadcast message which won't have session and flow fields set and won't be high priority
 	bcastID := testdata.InsertBroadcast(rt, testdata.Org1, `eng`, map[i18n.Language]string{`eng`: "Blast"}, nil, models.NilScheduleID, []*testdata.Contact{testFred}, nil)
 	bcastMsg1 := flows.NewMsgOut(fredURN, assets.NewChannelReference(testdata.TwilioChannel.UUID, "Test Channel"), &flows.MsgContent{Text: "Blast"}, nil, flows.NilMsgTopic, i18n.NilLocale, flows.NilUnsendableReason)
-	msg3, err := models.NewOutgoingBroadcastMsg(rt, oa.Org(), twilio, fred, bcastMsg1, &models.BroadcastBatch{BroadcastID: bcastID, OptInID: optInID, CreatedByID: testdata.Admin.ID})
+	msg3, err := models.NewOutgoingBroadcastMsg(rt, oa.Org(), twilio, fred, bcastMsg1, &models.Broadcast{ID: bcastID, OptInID: optInID, CreatedByID: testdata.Admin.ID})
 	require.NoError(t, err)
 
 	err = models.InsertMessages(ctx, rt.DB, []*models.Msg{msg3})

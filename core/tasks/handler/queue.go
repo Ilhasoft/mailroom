@@ -12,7 +12,6 @@ import (
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/nyaruka/mailroom/utils/queues"
 )
 
 // Task is the interface for all contact tasks - tasks which operate on a single contact in real time
@@ -73,7 +72,7 @@ func queueTask(rc redis.Conn, orgID models.OrgID, contactID models.ContactID, ta
 	}
 
 	// then add a handle task for that contact on our global handler queue to
-	err = tasks.Queue(rc, tasks.HandlerQueue, orgID, &HandleContactEventTask{ContactID: contactID}, queues.DefaultPriority)
+	err = tasks.Queue(rc, tasks.HandlerQueue, orgID, &HandleContactEventTask{ContactID: contactID}, false)
 	if err != nil {
 		return fmt.Errorf("error queuing handle task: %w", err)
 	}

@@ -20,7 +20,7 @@ func TestLoadTriggers(t *testing.T) {
 	defer testsuite.Reset(testsuite.ResetAll)
 
 	rt.DB.MustExec(`DELETE FROM triggers_trigger`)
-	farmersGroup := testdata.InsertContactGroup(rt, testdata.Org1, assets.GroupUUID(uuids.New()), "Farmers", "")
+	farmersGroup := testdata.InsertContactGroup(rt, testdata.Org1, assets.GroupUUID(uuids.NewV4()), "Farmers", "")
 
 	// create trigger for other org to ensure it isn't loaded
 	testdata.InsertCatchallTrigger(rt, testdata.Org2, testdata.Org2Favorites, nil, nil, nil)

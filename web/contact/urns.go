@@ -3,14 +3,15 @@ package contact
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 
 	"github.com/nyaruka/gocommon/i18n"
 	"github.com/nyaruka/gocommon/urns"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/mailroom/web"
-	"golang.org/x/exp/maps"
 )
 
 func init() {
@@ -69,7 +70,7 @@ func handleURNs(ctx context.Context, rt *runtime.Runtime, r *urnsRequest) (any, 
 		}
 	}
 
-	ownerIDs, err := models.GetContactIDsFromURNs(ctx, rt.DB, r.OrgID, maps.Keys(urnsToLookup))
+	ownerIDs, err := models.GetContactIDsFromURNs(ctx, rt.DB, r.OrgID, slices.Collect(maps.Keys(urnsToLookup)))
 	if err != nil {
 		return nil, 0, fmt.Errorf("error getting URN owners: %w", err)
 	}

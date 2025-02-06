@@ -17,7 +17,7 @@ func TestSend(t *testing.T) {
 
 	defer testsuite.Reset(testsuite.ResetData | testsuite.ResetRedis)
 
-	cathyTicket := testdata.InsertOpenTicket(rt, testdata.Org1, testdata.Cathy, testdata.DefaultTopic, "help", time.Date(2015, 1, 1, 12, 30, 45, 0, time.UTC), nil)
+	cathyTicket := testdata.InsertOpenTicket(rt, testdata.Org1, testdata.Cathy, testdata.DefaultTopic, time.Date(2015, 1, 1, 12, 30, 45, 0, time.UTC), nil)
 
 	testsuite.RunWebTests(t, ctx, rt, "testdata/send.json", map[string]string{
 		"cathy_ticket_id": fmt.Sprintf("%d", cathyTicket.ID),

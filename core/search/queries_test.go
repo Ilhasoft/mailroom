@@ -17,8 +17,8 @@ import (
 func TestBuildRecipientsQuery(t *testing.T) {
 	_, rt := testsuite.Runtime()
 
-	dates.SetNowSource(dates.NewFixedNowSource(time.Date(2022, 4, 20, 15, 30, 45, 0, time.UTC)))
-	defer dates.SetNowSource(dates.DefaultNowSource)
+	dates.SetNowFunc(dates.NewFixedNow(time.Date(2022, 4, 20, 15, 30, 45, 0, time.UTC)))
+	defer dates.SetNowFunc(time.Now)
 
 	oa := testdata.Org1.Load(rt)
 	flow, err := oa.FlowByID(testdata.Favorites.ID)

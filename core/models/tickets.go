@@ -50,7 +50,6 @@ type Ticket struct {
 		ContactID      ContactID        `db:"contact_id"`
 		Status         TicketStatus     `db:"status"`
 		TopicID        TopicID          `db:"topic_id"`
-		Body           string           `db:"body"`
 		AssigneeID     UserID           `db:"assignee_id"`
 		OpenedOn       time.Time        `db:"opened_on"`
 		OpenedByID     UserID           `db:"opened_by_id"`
@@ -63,7 +62,7 @@ type Ticket struct {
 }
 
 // NewTicket creates a new open ticket
-func NewTicket(uuid flows.TicketUUID, orgID OrgID, userID UserID, flowID FlowID, contactID ContactID, topicID TopicID, body string, assigneeID UserID) *Ticket {
+func NewTicket(uuid flows.TicketUUID, orgID OrgID, userID UserID, flowID FlowID, contactID ContactID, topicID TopicID, assigneeID UserID) *Ticket {
 	t := &Ticket{}
 	t.t.UUID = uuid
 	t.t.OrgID = orgID
@@ -72,7 +71,6 @@ func NewTicket(uuid flows.TicketUUID, orgID OrgID, userID UserID, flowID FlowID,
 	t.t.ContactID = contactID
 	t.t.Status = TicketStatusOpen
 	t.t.TopicID = topicID
-	t.t.Body = body
 	t.t.AssigneeID = assigneeID
 	return t
 }
@@ -83,7 +81,6 @@ func (t *Ticket) OrgID() OrgID              { return t.t.OrgID }
 func (t *Ticket) ContactID() ContactID      { return t.t.ContactID }
 func (t *Ticket) Status() TicketStatus      { return t.t.Status }
 func (t *Ticket) TopicID() TopicID          { return t.t.TopicID }
-func (t *Ticket) Body() string              { return t.t.Body }
 func (t *Ticket) AssigneeID() UserID        { return t.t.AssigneeID }
 func (t *Ticket) RepliedOn() *time.Time     { return t.t.RepliedOn }
 func (t *Ticket) LastActivityOn() time.Time { return t.t.LastActivityOn }
@@ -106,7 +103,7 @@ func (t *Ticket) FlowTicket(oa *OrgAssets) *flows.Ticket {
 		}
 	}
 
-	return flows.NewTicket(t.UUID(), topic, t.Body(), assignee)
+	return flows.NewTicket(t.UUID(), topic, assignee)
 }
 
 const sqlSelectLastOpenTicket = `
@@ -117,7 +114,6 @@ SELECT
   contact_id,
   status,
   topic_id,
-  body,
   assignee_id,
   opened_on,
   opened_by_id,
@@ -151,7 +147,6 @@ SELECT
   contact_id,
   status,
   topic_id,
-  body,
   assignee_id,
   opened_on,
   opened_by_id,
@@ -197,7 +192,6 @@ SELECT
   t.contact_id,
   t.status,
   t.topic_id,
-  t.body,
   t.assignee_id,
   t.opened_on,
   t.opened_by_id,
@@ -238,8 +232,8 @@ func lookupTicket(ctx context.Context, db *sqlx.DB, query string, params ...any)
 
 const sqlInsertTicket = `
 INSERT INTO 
-  tickets_ticket(uuid,  org_id,  contact_id,  status,  topic_id,  body,  assignee_id,  opened_on, opened_by_id,  opened_in_id,  modified_on, last_activity_on)
-  VALUES(        :uuid, :org_id, :contact_id, :status, :topic_id, :body, :assignee_id, NOW(),     :opened_by_id, :opened_in_id, NOW()      , NOW())
+  tickets_ticket(uuid,  org_id,  contact_id,  status,  topic_id,  assignee_id,  opened_on, opened_by_id,  opened_in_id,  modified_on, last_activity_on)
+  VALUES(       :uuid, :org_id, :contact_id, :status, :topic_id, :assignee_id,  NOW(),    :opened_by_id, :opened_in_id,  NOW()      , NOW())
 RETURNING
   id
 `

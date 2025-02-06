@@ -767,7 +767,7 @@ func (s *service) responseForSprint(ctx context.Context, rp *redis.Pool, channel
 				// with a 1 second timeout in the script that will get called / repeated until the UUID is
 				// populated at which time we will actually continue.
 
-				recordingUUID := string(uuids.New())
+				recordingUUID := string(uuids.NewV4())
 				eventURL := resumeURL + "&wait_type=recording_url&recording_uuid=" + recordingUUID
 				eventURL = eventURL + "&sig=" + url.QueryEscape(s.calculateSignature(eventURL))
 				record := &Record{
@@ -805,7 +805,7 @@ func (s *service) responseForSprint(ctx context.Context, rp *redis.Pool, channel
 			//
 			// We then track the state of that call, restarting NCCO control of the original call when
 			// the transfer has completed.
-			conversationUUID := string(uuids.New())
+			conversationUUID := string(uuids.NewV4())
 			connect := &Conversation{
 				Action: "conversation",
 				Name:   conversationUUID,

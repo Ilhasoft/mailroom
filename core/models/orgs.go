@@ -7,15 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"mime"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/nyaruka/gocommon/dbutil"
 	"github.com/nyaruka/gocommon/httpx"
 	"github.com/nyaruka/gocommon/jsonx"
+	"github.com/nyaruka/gocommon/uuids"
 	"github.com/nyaruka/goflow/envs"
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/goflow/flows/engine"
@@ -55,8 +57,15 @@ func airtimeServiceFactory(rt *runtime.Runtime) engine.AirtimeServiceFactory {
 	}
 }
 
-// OrgID is our type for orgs ids
+// OrgID is our type for org ids
 type OrgID int
+
+func (i OrgID) String() string {
+	return strconv.FormatInt(int64(i), 10)
+}
+
+// OrgUUID is our type for org UUIDs
+type OrgUUID uuids.UUID
 
 const (
 	// NilOrgID is the id 0 considered as nil org id
@@ -69,11 +78,15 @@ const (
 // Org is mailroom's type for RapidPro orgs. It also implements the envs.Environment interface for GoFlow
 type Org struct {
 	o struct {
-		ID        OrgID         `json:"id"`
-		ParentID  OrgID         `json:"parent_id"`
-		Suspended bool          `json:"is_suspended"`
-		FlowSMTP  null.String   `json:"flow_smtp"`
-		Config    null.Map[any] `json:"config"`
+		UUID            OrgUUID       `json:"uuid"`
+		ID              OrgID         `json:"id"`
+		ParentID        OrgID         `json:"parent_id"`
+		Name            string        `json:"name"`
+		Suspended       bool          `json:"is_suspended"`
+		FlowSMTP        null.String   `json:"flow_smtp"`
+		PrometheusToken null.String   `json:"prometheus_token"`
+		Config          null.Map[any] `json:"config"`
+		OutboxCount     int           `json:"outbox_count"`
 	}
 	env envs.Environment
 }
@@ -81,14 +94,22 @@ type Org struct {
 // ID returns the id of the org
 func (o *Org) ID() OrgID { return o.o.ID }
 
+// Name returns the name of the org
+func (o *Org) Name() string { return o.o.Name }
+
 // Suspended returns whether the org has been suspended
 func (o *Org) Suspended() bool { return o.o.Suspended }
 
 // FlowSMTP provides custom SMTP settings for flow sessions
 func (o *Org) FlowSMTP() string { return string(o.o.FlowSMTP) }
 
+// FlowSMTP provides custom SMTP settings for flow sessions
+func (o *Org) PrometheusToken() string { return string(o.o.PrometheusToken) }
+
 // Environment returns this org as an engine environment
 func (o *Org) Environment() envs.Environment { return o.env }
+
+func (o *Org) OutboxCount() int { return o.o.OutboxCount }
 
 // MarshalJSON is our custom marshaller so that our inner env get output
 func (o *Org) MarshalJSON() ([]byte, error) {
@@ -157,8 +178,6 @@ func (o *Org) AirtimeService(httpClient *http.Client, httpRetries *httpx.RetryCo
 
 // StoreAttachment saves an attachment to storage
 func (o *Org) StoreAttachment(ctx context.Context, rt *runtime.Runtime, filename string, contentType string, content io.ReadCloser) (utils.Attachment, error) {
-	prefix := rt.Config.S3AttachmentsPrefix
-
 	// read the content
 	contentBytes, err := io.ReadAll(content)
 	if err != nil {
@@ -171,9 +190,9 @@ func (o *Org) StoreAttachment(ctx context.Context, rt *runtime.Runtime, filename
 		contentType, _, _ = mime.ParseMediaType(contentType)
 	}
 
-	path := o.attachmentPath(prefix, filename)
+	path := o.attachmentPath("attachments", filename)
 
-	url, err := rt.AttachmentStorage.Put(ctx, path, contentType, contentBytes)
+	url, err := rt.S3.PutObject(ctx, rt.Config.S3AttachmentsBucket, path, contentType, contentBytes, types.ObjectCannedACLPublicRead)
 	if err != nil {
 		return "", fmt.Errorf("unable to store attachment content: %w", err)
 	}
@@ -203,36 +222,15 @@ func orgFromAssets(sa flows.SessionAssets) *Org {
 	return sa.Source().(*OrgAssets).Org()
 }
 
-// LoadOrg loads the org for the passed in id, returning any error encountered
-func LoadOrg(ctx context.Context, cfg *runtime.Config, db *sql.DB, orgID OrgID) (*Org, error) {
-	start := time.Now()
-
-	org := &Org{}
-	rows, err := db.QueryContext(ctx, selectOrgByID, orgID)
-	if err != nil {
-		return nil, fmt.Errorf("error loading org: %d: %w", orgID, err)
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return nil, fmt.Errorf("no org with id: %d", orgID)
-	}
-
-	err = dbutil.ScanJSON(rows, org)
-	if err != nil {
-		return nil, fmt.Errorf("error unmarshalling org: %w", err)
-	}
-
-	slog.Debug("loaded org environment", "elapsed", time.Since(start), "org_id", orgID)
-
-	return org, nil
-}
-
-const selectOrgByID = `
+const sqlSelectOrgByID = `
 SELECT ROW_TO_JSON(o) FROM (SELECT
+	uuid,
 	id,
 	parent_id,
+	name,
 	is_suspended,
 	flow_smtp,
+	prometheus_token,
 	o.config AS config,
 	(SELECT CASE date_format WHEN 'D' THEN 'DD-MM-YYYY' WHEN 'M' THEN 'MM-DD-YYYY' ELSE 'YYYY-MM-DD' END) AS date_format, 
 	'tt:mm' AS time_format,
@@ -246,7 +244,39 @@ SELECT ROW_TO_JSON(o) FROM (SELECT
 			WHERE c.org_id = o.id AND c.is_active = TRUE AND c.country IS NOT NULL
 			GROUP BY c.country ORDER BY count(c.country) desc, country LIMIT 1
 	    ), ''
-	) AS default_country
+	) AS default_country,
+	(SELECT SUM(count) FROM orgs_itemcount WHERE org_id = $1 AND scope = 'msgs:folder:O') AS outbox_count
 	FROM orgs_org o
-	WHERE o.id = $1
+	WHERE id = $1
 ) o`
+
+// LoadOrg loads the org for the passed in id, returning any error encountered
+func LoadOrg(ctx context.Context, db *sql.DB, orgID OrgID) (*Org, error) {
+	org := &Org{}
+	rows, err := db.QueryContext(ctx, sqlSelectOrgByID, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("error loading org: %d: %w", orgID, err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, fmt.Errorf("no org with id: %d", orgID)
+	}
+
+	err = dbutil.ScanJSON(rows, org)
+	if err != nil {
+		return nil, fmt.Errorf("error unmarshalling org: %w", err)
+	}
+
+	return org, nil
+}
+
+// GetOrgIDFromUUID gets an org ID from a UUID (returns NilOrgID if not found)
+func GetOrgIDFromUUID(ctx context.Context, db *sql.DB, orgUUID OrgUUID) (OrgID, error) {
+	var orgID OrgID
+	err := db.QueryRowContext(ctx, `SELECT id FROM orgs_org WHERE uuid = $1`, orgUUID).Scan(&orgID)
+	if err != nil && err != sql.ErrNoRows {
+		return NilOrgID, fmt.Errorf("error getting org id by uuid: %w", err)
+	}
+
+	return orgID, nil
+}

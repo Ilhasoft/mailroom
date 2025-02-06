@@ -51,7 +51,7 @@ func TestResponseForSprint(t *testing.T) {
 	rt.DB.MustExec(`UPDATE channels_channel SET config = config || '{"callback_domain": "localhost:8091"}'::jsonb, role='SRCA' WHERE id = $1`, testdata.VonageChannel.ID)
 
 	// set our UUID generator
-	uuids.SetGenerator(uuids.NewSeededGenerator(0))
+	uuids.SetGenerator(uuids.NewSeededGenerator(0, time.Now))
 
 	oa, err := models.GetOrgAssets(ctx, rt, testdata.Org1.ID)
 	require.NoError(t, err)

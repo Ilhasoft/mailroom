@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSendBroadcastTask(t *testing.T) {
+func TestBroadcastsFromEvents(t *testing.T) {
 	ctx, rt := testsuite.Runtime()
 
 	defer testsuite.Reset(testsuite.ResetAll)
@@ -58,7 +58,7 @@ func TestSendBroadcastTask(t *testing.T) {
 		groups             []*assets.GroupReference
 		contacts           []*flows.ContactReference
 		urns               []urns.URN
-		queue              *queues.FairSorted
+		queue              queues.Fair
 		expectedBatchCount int
 		expectedMsgCount   int
 		expectedMsgText    string
@@ -164,7 +164,7 @@ func TestSendBroadcastTask(t *testing.T) {
 		bcast, err := models.NewBroadcastFromEvent(ctx, rt.DB, oa, event)
 		assert.NoError(t, err)
 
-		err = tasks.Queue(rc, tc.queue, testdata.Org1.ID, &msgs.SendBroadcastTask{Broadcast: bcast}, queues.DefaultPriority)
+		err = tasks.Queue(rc, tc.queue, testdata.Org1.ID, &msgs.SendBroadcastTask{Broadcast: bcast}, false)
 		assert.NoError(t, err)
 
 		taskCounts := testsuite.FlushTasks(t, rt)
@@ -181,7 +181,7 @@ func TestSendBroadcastTask(t *testing.T) {
 	}
 }
 
-func TestBroadcastTask(t *testing.T) {
+func TestSendBroadcastTask(t *testing.T) {
 	ctx, rt := testsuite.Runtime()
 	rc := rt.RP.Get()
 	defer rc.Close()
@@ -213,7 +213,7 @@ func TestBroadcastTask(t *testing.T) {
 		query           string
 		exclusions      models.Exclusions
 		createdByID     models.UserID
-		queue           *queues.FairSorted
+		queue           queues.Fair
 		expectedBatches int
 		expectedMsgs    map[string]int
 	}{
@@ -243,7 +243,7 @@ func TestBroadcastTask(t *testing.T) {
 			createdByID:     testdata.Agent.ID,
 			queue:           tasks.HandlerQueue,
 			expectedBatches: 1,
-			expectedMsgs:    map[string]int{"hi Cathy from Nyaruka goflow URN: tel:+12065551212 Gender: F": 1},
+			expectedMsgs:    map[string]int{"hi Cathy from TextIt goflow URN: tel:+12065551212 Gender: F": 1},
 		},
 		{
 			translations: flows.BroadcastTranslations{
@@ -283,10 +283,12 @@ func TestBroadcastTask(t *testing.T) {
 		}
 
 		bcast := models.NewBroadcast(oa.OrgID(), tc.translations, tc.baseLanguage, tc.expressions, optInID, tc.groupIDs, tc.contactIDs, tc.URNs, tc.query, tc.exclusions, tc.createdByID)
+		err := models.InsertBroadcast(ctx, rt.DB, bcast)
+		assert.NoError(t, err)
 
 		task := &msgs.SendBroadcastTask{Broadcast: bcast}
 
-		err := tasks.Queue(rc, tasks.BatchQueue, testdata.Org1.ID, task, queues.DefaultPriority)
+		err = tasks.Queue(rc, tasks.BatchQueue, testdata.Org1.ID, task, false)
 		assert.NoError(t, err)
 
 		taskCounts := testsuite.FlushTasks(t, rt)

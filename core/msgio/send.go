@@ -3,11 +3,11 @@ package msgio
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"slices"
 
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
-	"golang.org/x/exp/maps"
 )
 
 type Send struct {
@@ -48,7 +48,7 @@ func tryToQueue(ctx context.Context, rt *runtime.Runtime, db models.DBorTx, msgs
 	// fetch URNs and organize by id
 	urnIDs := getMessageURNIDs(msgs)
 	urnsByID := make(map[models.URNID]*models.ContactURN, len(urnIDs))
-	for _, batch := range models.ChunkSlice(urnIDs, 1000) {
+	for batch := range slices.Chunk(urnIDs, 1000) {
 		urns, err := models.LoadContactURNs(ctx, db, batch)
 		if err != nil {
 			slog.Error("error getting contact URNs", "error", err)
@@ -155,7 +155,7 @@ func getMessageURNIDs(msgs []*models.Msg) []models.URNID {
 			ids[*uid] = true
 		}
 	}
-	return maps.Keys(ids)
+	return slices.Collect(maps.Keys(ids))
 }
 
 func assert(c bool, m string) {

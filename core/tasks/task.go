@@ -13,8 +13,9 @@ import (
 	"github.com/nyaruka/mailroom/utils/queues"
 )
 
-var HandlerQueue = queues.NewFairSorted("handler")
-var BatchQueue = queues.NewFairSorted("batch")
+var HandlerQueue = queues.NewFairSorted("tasks:handler")
+var BatchQueue = queues.NewFairSorted("tasks:batch")
+var ThrottledQueue = queues.NewFairSorted("tasks:throttled")
 
 var registeredTypes = map[string](func() Task){}
 
@@ -56,7 +57,7 @@ func Perform(ctx context.Context, rt *runtime.Runtime, task *queues.Task) error 
 }
 
 // Queue adds the given task to the given queue
-func Queue(rc redis.Conn, q *queues.FairSorted, orgID models.OrgID, task Task, priority queues.Priority) error {
+func Queue(rc redis.Conn, q queues.Fair, orgID models.OrgID, task Task, priority bool) error {
 	return q.Push(rc, task.Type(), int(orgID), task, priority)
 }
 

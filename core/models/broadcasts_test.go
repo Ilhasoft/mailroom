@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestInsertBroadcast(t *testing.T) {
+func TestBroadcasts(t *testing.T) {
 	ctx, rt := testsuite.Runtime()
 
 	defer testsuite.Reset(testsuite.ResetData)
@@ -51,6 +51,22 @@ func TestInsertBroadcast(t *testing.T) {
 	})
 	assertdb.Query(t, rt.DB, `SELECT count(*) FROM msgs_broadcast_groups WHERE broadcast_id = $1`, bcast.ID).Returns(1)
 	assertdb.Query(t, rt.DB, `SELECT count(*) FROM msgs_broadcast_contacts WHERE broadcast_id = $1`, bcast.ID).Returns(3)
+
+	err = bcast.SetQueued(ctx, rt.DB, 5)
+	assert.NoError(t, err)
+	assertdb.Query(t, rt.DB, `SELECT status, contact_count FROM msgs_broadcast WHERE id = $1`, bcast.ID).Columns(map[string]any{"status": "Q", "contact_count": int64(5)})
+
+	err = bcast.SetStarted(ctx, rt.DB)
+	assert.NoError(t, err)
+	assertdb.Query(t, rt.DB, `SELECT status FROM msgs_broadcast WHERE id = $1`, bcast.ID).Returns("S")
+
+	err = bcast.SetCompleted(ctx, rt.DB)
+	assert.NoError(t, err)
+	assertdb.Query(t, rt.DB, `SELECT status FROM msgs_broadcast WHERE id = $1`, bcast.ID).Returns("C")
+
+	err = bcast.SetFailed(ctx, rt.DB)
+	assert.NoError(t, err)
+	assertdb.Query(t, rt.DB, `SELECT status FROM msgs_broadcast WHERE id = $1`, bcast.ID).Returns("F")
 }
 
 func TestInsertChildBroadcast(t *testing.T) {
@@ -115,19 +131,16 @@ func TestNonPersistentBroadcasts(t *testing.T) {
 	assert.Equal(t, "", bcast.Query)
 	assert.Equal(t, models.NoExclusions, bcast.Exclusions)
 
-	batch := bcast.CreateBatch([]models.ContactID{testdata.Alexandria.ID, testdata.Bob.ID}, false)
+	batch := bcast.CreateBatch([]models.ContactID{testdata.Alexandria.ID, testdata.Bob.ID}, true, false)
 
 	assert.Equal(t, models.NilBroadcastID, batch.BroadcastID)
-	assert.Equal(t, testdata.Org1.ID, batch.OrgID)
-	assert.Equal(t, i18n.Language("eng"), batch.BaseLanguage)
-	assert.Equal(t, translations, batch.Translations)
-	assert.Equal(t, optIn.ID, batch.OptInID)
+	assert.NotNil(t, testdata.Org1.ID, batch.Broadcast)
 	assert.Equal(t, []models.ContactID{testdata.Alexandria.ID, testdata.Bob.ID}, batch.ContactIDs)
 
 	oa, err := models.GetOrgAssets(ctx, rt, testdata.Org1.ID)
 	require.NoError(t, err)
 
-	msgs, err := batch.CreateMessages(ctx, rt, oa)
+	msgs, err := bcast.CreateMessages(ctx, rt, oa, batch)
 	require.NoError(t, err)
 
 	assert.Equal(t, 2, len(msgs))
@@ -144,9 +157,6 @@ func TestBroadcastBatchCreateMessage(t *testing.T) {
 
 	oa, err := models.GetOrgAssetsWithRefresh(ctx, rt, testdata.Org1.ID, models.RefreshOptIns)
 	require.NoError(t, err)
-
-	// we need a broadcast id to insert messages but the content here is ignored
-	bcastID := testdata.InsertBroadcast(rt, testdata.Org1, "eng", map[i18n.Language]string{"eng": "Test"}, nil, models.NilScheduleID, nil, nil)
 
 	tcs := []struct {
 		contactLanguage      i18n.Language
@@ -238,11 +248,10 @@ func TestBroadcastBatchCreateMessage(t *testing.T) {
 	}
 
 	for i, tc := range tcs {
-		contact := testdata.InsertContact(rt, testdata.Org1, flows.ContactUUID(uuids.New()), "Felix", tc.contactLanguage, models.ContactStatusActive)
+		contact := testdata.InsertContact(rt, testdata.Org1, flows.ContactUUID(uuids.NewV4()), "Felix", tc.contactLanguage, models.ContactStatusActive)
 		testdata.InsertContactURN(rt, testdata.Org1, contact, tc.contactURN, 1000, nil)
 
-		batch := &models.BroadcastBatch{
-			BroadcastID:       bcastID,
+		bcast := &models.Broadcast{
 			OrgID:             testdata.Org1.ID,
 			Translations:      tc.translations,
 			BaseLanguage:      tc.baseLanguage,
@@ -250,10 +259,18 @@ func TestBroadcastBatchCreateMessage(t *testing.T) {
 			OptInID:           tc.optInID,
 			TemplateID:        tc.templateID,
 			TemplateVariables: tc.templateVariables,
-			ContactIDs:        []models.ContactID{contact.ID},
+		}
+		err = models.InsertBroadcast(ctx, rt.DB, bcast)
+		require.NoError(t, err)
+
+		batch := &models.BroadcastBatch{
+			BroadcastID: bcast.ID,
+			Broadcast:   bcast,
+			ContactIDs:  []models.ContactID{contact.ID},
+			IsLast:      true,
 		}
 
-		msgs, err := batch.CreateMessages(ctx, rt, oa)
+		msgs, err := bcast.CreateMessages(ctx, rt, oa, batch)
 		if tc.expectedError != "" {
 			assert.EqualError(t, err, tc.expectedError, "error mismatch in test case %d", i)
 		} else {

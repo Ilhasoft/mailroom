@@ -56,14 +56,14 @@ func TestCheckSchedules(t *testing.T) {
 		AND parent_id = $2 
 		AND translations -> 'eng' ->> 'text' = 'Hi'
 		AND translations -> 'spa' ->> 'text' = 'Hola'
-		AND status = 'Q' 
+		AND status = 'P' 
 		AND base_language = 'eng'`, testdata.Org1.ID, b1).Returns(1)
 
 	assertdb.Query(t, rt.DB, `SELECT count(*) FROM msgs_broadcast WHERE org_id = $1 
 		AND parent_id = $2 
 		AND translations -> 'eng' ->> 'text' = 'Bye'
 		AND translations -> 'spa' ->> 'text' = 'Chau'
-		AND status = 'Q' 
+		AND status = 'P' 
 		AND base_language = 'eng'`, testdata.Org1.ID, b2).Returns(1)
 
 	// with the right count of contacts and groups

@@ -5,34 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"time"
 
 	"github.com/gomodule/redigo/redis"
 	"github.com/nyaruka/gocommon/dates"
 	"github.com/nyaruka/gocommon/jsonx"
-)
-
-// Task is a wrapper for encoding a task
-type Task struct {
-	Type       string          `json:"type"`
-	OwnerID    int             `json:"-"`
-	Task       json.RawMessage `json:"task"`
-	QueuedOn   time.Time       `json:"queued_on"`
-	ErrorCount int             `json:"error_count,omitempty"`
-}
-
-// Priority is the priority for the task
-type Priority int
-
-const (
-	// HighPriority is the highest priority for tasks
-	HighPriority = Priority(-10000000)
-
-	// DefaultPriority is the default priority for tasks
-	DefaultPriority = Priority(0)
-
-	// LowPriority is the lowest priority for tasks
-	LowPriority = Priority(+10000000)
 )
 
 type FairSorted struct {
@@ -48,7 +24,7 @@ func (q *FairSorted) String() string {
 }
 
 // Push adds the passed in task to our queue for execution
-func (q *FairSorted) Push(rc redis.Conn, taskType string, ownerID int, task any, priority Priority) error {
+func (q *FairSorted) Push(rc redis.Conn, taskType string, ownerID int, task any, priority bool) error {
 	score := q.score(priority)
 
 	taskBody, err := json.Marshal(task)
@@ -65,6 +41,21 @@ func (q *FairSorted) Push(rc redis.Conn, taskType string, ownerID int, task any,
 	return err
 }
 
+func (q *FairSorted) Owners(rc redis.Conn) ([]int, error) {
+	strs, err := redis.Strings(rc.Do("ZRANGE", q.activeKey(), 0, -1))
+	if err != nil {
+		return nil, err
+	}
+
+	actual := make([]int, len(strs))
+	for i, s := range strs {
+		owner, _ := strconv.ParseInt(s, 10, 64)
+		actual[i] = int(owner)
+	}
+
+	return actual, nil
+}
+
 func (q *FairSorted) activeKey() string {
 	return fmt.Sprintf("%s:active", q.keyBase)
 }
@@ -73,8 +64,14 @@ func (q *FairSorted) queueKey(ownerID int) string {
 	return fmt.Sprintf("%s:%d", q.keyBase, ownerID)
 }
 
-func (q *FairSorted) score(priority Priority) string {
-	s := float64(dates.Now().UnixMicro())/float64(1000000) + float64(priority)
+func (q *FairSorted) score(priority bool) string {
+	weight := float64(0)
+	if priority {
+		weight = -10000000
+	}
+
+	s := float64(dates.Now().UnixMicro())/float64(1000000) + weight
+
 	return strconv.FormatFloat(s, 'f', 6, 64)
 }
 
@@ -133,4 +130,24 @@ var scriptFSSize = redis.NewScript(1, luaFSSize)
 // Size returns the total number of tasks for the passed in queue across all owners
 func (q *FairSorted) Size(rc redis.Conn) (int, error) {
 	return redis.Int(scriptFSSize.Do(rc, q.activeKey(), q.keyBase))
+}
+
+//go:embed lua/fair_sorted_pause.lua
+var luaFSPause string
+var scriptFSPause = redis.NewScript(1, luaFSPause)
+
+// Pause marks the given task owner as paused so their tasks are not popped.
+func (q *FairSorted) Pause(rc redis.Conn, ownerID int) error {
+	_, err := scriptFSPause.Do(rc, q.activeKey(), strconv.FormatInt(int64(ownerID), 10))
+	return err
+}
+
+//go:embed lua/fair_sorted_resume.lua
+var luaFSResume string
+var scriptFSResume = redis.NewScript(1, luaFSResume)
+
+// Resume marks the given task owner as active so their tasks will be popped.
+func (q *FairSorted) Resume(rc redis.Conn, ownerID int) error {
+	_, err := scriptFSResume.Do(rc, q.activeKey(), strconv.FormatInt(int64(ownerID), 10))
+	return err
 }

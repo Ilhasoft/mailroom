@@ -54,7 +54,7 @@ type SQLAssertion struct {
 }
 
 func NewActionUUID() flows.ActionUUID {
-	return flows.ActionUUID(uuids.New())
+	return flows.ActionUUID(uuids.NewV4())
 }
 
 // createTestFlow creates a flow that starts with a split by contact id
@@ -67,12 +67,12 @@ func createTestFlow(t *testing.T, uuid assets.FlowUUID, tc TestCase) flows.Flow 
 	exitUUIDs := make([]flows.ExitUUID, len(tc.Actions))
 	i := 0
 	for range tc.Actions {
-		categoryUUIDs[i] = flows.CategoryUUID(uuids.New())
-		exitUUIDs[i] = flows.ExitUUID(uuids.New())
+		categoryUUIDs[i] = flows.CategoryUUID(uuids.NewV4())
+		exitUUIDs[i] = flows.ExitUUID(uuids.NewV4())
 		i++
 	}
-	defaultCategoryUUID := flows.CategoryUUID(uuids.New())
-	defaultExitUUID := flows.ExitUUID(uuids.New())
+	defaultCategoryUUID := flows.CategoryUUID(uuids.NewV4())
+	defaultExitUUID := flows.ExitUUID(uuids.NewV4())
 
 	cases := make([]*routers.Case, len(tc.Actions))
 	categories := make([]flows.Category, len(tc.Actions))
@@ -81,17 +81,17 @@ func createTestFlow(t *testing.T, uuid assets.FlowUUID, tc TestCase) flows.Flow 
 	i = 0
 	for contact, actions := range tc.Actions {
 		cases[i] = routers.NewCase(
-			uuids.New(),
+			uuids.NewV4(),
 			"has_any_word",
 			[]string{fmt.Sprintf("%d", contact.ID)},
 			categoryUUIDs[i],
 		)
 
 		exitNodes[i] = definition.NewNode(
-			flows.NodeUUID(uuids.New()),
+			flows.NodeUUID(uuids.NewV4()),
 			actions,
 			nil,
-			[]flows.Exit{definition.NewExit(flows.ExitUUID(uuids.New()), "")},
+			[]flows.Exit{definition.NewExit(flows.ExitUUID(uuids.NewV4()), "")},
 		)
 
 		categories[i] = routers.NewCategory(
@@ -122,7 +122,7 @@ func createTestFlow(t *testing.T, uuid assets.FlowUUID, tc TestCase) flows.Flow 
 
 	// and our entry node
 	entry := definition.NewNode(
-		flows.NodeUUID(uuids.New()),
+		flows.NodeUUID(uuids.NewV4()),
 		nil,
 		router,
 		exits,
@@ -203,7 +203,7 @@ func RunTestCases(t *testing.T, ctx context.Context, rt *runtime.Runtime, tcs []
 		}
 
 		for _, c := range []*testdata.Contact{testdata.Cathy, testdata.Bob, testdata.George, testdata.Alexandria} {
-			_, err := runner.StartFlow(ctx, rt, oa, flow.(*models.Flow), []models.ContactID{c.ID}, options)
+			_, err := runner.StartFlow(ctx, rt, oa, flow.(*models.Flow), []models.ContactID{c.ID}, options, models.NilStartID)
 			require.NoError(t, err)
 		}
 
@@ -278,7 +278,7 @@ func RunFlowAndApplyEvents(t *testing.T, ctx context.Context, rt *runtime.Runtim
 	tx, err := rt.DB.BeginTxx(ctx, nil)
 	require.NoError(t, err)
 
-	session, err := models.NewSession(ctx, tx, oa, fs, sprint)
+	session, err := models.NewSession(ctx, tx, oa, fs, sprint, models.NilStartID)
 	require.NoError(t, err)
 
 	err = tx.Commit()

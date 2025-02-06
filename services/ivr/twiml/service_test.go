@@ -27,7 +27,7 @@ func TestResponseForSprint(t *testing.T) {
 
 	urn := urns.URN("tel:+12067799294")
 	expiresOn := time.Now().Add(time.Hour)
-	channelRef := assets.NewChannelReference(assets.ChannelUUID(uuids.New()), "Twilio Channel")
+	channelRef := assets.NewChannelReference(assets.ChannelUUID(uuids.NewV4()), "Twilio Channel")
 	env := envs.NewBuilder().WithAllowedLanguages("eng", "spa").WithDefaultCountry("US").Build()
 
 	resumeURL := "http://temba.io/resume?session=1"
@@ -120,7 +120,7 @@ func TestURNForRequest(t *testing.T) {
 	s := twiml.NewService(http.DefaultClient, "12345", "sesame")
 
 	makeRequest := func(body string) *http.Request {
-		r, _ := http.NewRequest("POST", "http://nyaruka.com/12345/incoming", strings.NewReader(body))
+		r, _ := http.NewRequest("POST", "http://textit.com/12345/incoming", strings.NewReader(body))
 		r.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 		r.Header.Add("Content-Length", strconv.Itoa(len(body)))
 		return r

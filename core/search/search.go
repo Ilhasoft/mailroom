@@ -86,11 +86,17 @@ func GetContactTotal(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAss
 		}
 	}
 
-	routing := strconv.FormatInt(int64(oa.OrgID()), 10)
-	eq := BuildElasticQuery(oa, group, models.NilContactStatus, nil, parsed)
+	// if group is a status group, Elastic won't know about it so search by status instead
+	status := models.NilContactStatus
+	if group != nil && !group.Visible() {
+		status = models.ContactStatus(group.Type())
+		group = nil
+	}
+
+	eq := BuildElasticQuery(oa, group, status, nil, parsed)
 	src := map[string]any{"query": eq}
 
-	count, err := rt.ES.Count().Index(rt.Config.ElasticContactsIndex).Routing(routing).Raw(bytes.NewReader(jsonx.MustMarshal(src))).Do(ctx)
+	count, err := rt.ES.Count().Index(rt.Config.ElasticContactsIndex).Routing(oa.OrgID().String()).Raw(bytes.NewReader(jsonx.MustMarshal(src))).Do(ctx)
 	if err != nil {
 		return nil, 0, fmt.Errorf("error performing count: %w", err)
 	}
@@ -117,8 +123,14 @@ func GetContactIDsForQueryPage(ctx context.Context, rt *runtime.Runtime, oa *mod
 		}
 	}
 
-	routing := strconv.FormatInt(int64(oa.OrgID()), 10)
-	eq := BuildElasticQuery(oa, group, models.NilContactStatus, excludeIDs, parsed)
+	// if group is a status group, Elastic won't know about it so search by status instead
+	status := models.NilContactStatus
+	if group != nil && !group.Visible() {
+		status = models.ContactStatus(group.Type())
+		group = nil
+	}
+
+	eq := BuildElasticQuery(oa, group, status, excludeIDs, parsed)
 
 	fieldSort, err := es.ToElasticSort(sort, oa.SessionAssets())
 	if err != nil {
@@ -134,7 +146,7 @@ func GetContactIDsForQueryPage(ctx context.Context, rt *runtime.Runtime, oa *mod
 		"track_total_hits": true,
 	}
 
-	results, err := rt.ES.Search().Index(index).Routing(routing).Raw(bytes.NewReader(jsonx.MustMarshal(src))).Do(ctx)
+	results, err := rt.ES.Search().Index(index).Routing(oa.OrgID().String()).Raw(bytes.NewReader(jsonx.MustMarshal(src))).Do(ctx)
 	if err != nil {
 		return nil, nil, 0, fmt.Errorf("error performing query: %w", err)
 	}
@@ -166,7 +178,12 @@ func GetContactIDsForQuery(ctx context.Context, rt *runtime.Runtime, oa *models.
 		}
 	}
 
-	routing := strconv.FormatInt(int64(oa.OrgID()), 10)
+	// if group is a status group, Elastic won't know about it so search by status instead
+	if group != nil && !group.Visible() {
+		status = models.ContactStatus(group.Type())
+		group = nil
+	}
+
 	eq := BuildElasticQuery(oa, group, status, nil, parsed)
 	sort := elastic.SortBy("id", true)
 	ids := make([]models.ContactID, 0, 100)
@@ -182,7 +199,7 @@ func GetContactIDsForQuery(ctx context.Context, rt *runtime.Runtime, oa *models.
 			"track_total_hits": false,
 		}
 
-		results, err := rt.ES.Search().Index(index).Routing(routing).Raw(bytes.NewReader(jsonx.MustMarshal(src))).Do(ctx)
+		results, err := rt.ES.Search().Index(index).Routing(oa.OrgID().String()).Raw(bytes.NewReader(jsonx.MustMarshal(src))).Do(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("error searching ES index: %w", err)
 		}
@@ -190,7 +207,7 @@ func GetContactIDsForQuery(ctx context.Context, rt *runtime.Runtime, oa *models.
 	}
 
 	// for larger limits we need to take a point in time and iterate through multiple search requests using search_after
-	pit, err := rt.ES.OpenPointInTime(index).Routing(routing).KeepAlive("1m").Do(ctx)
+	pit, err := rt.ES.OpenPointInTime(index).Routing(oa.OrgID().String()).KeepAlive("1m").Do(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("error creating ES point-in-time: %w", err)
 	}

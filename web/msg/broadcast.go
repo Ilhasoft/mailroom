@@ -15,7 +15,6 @@ import (
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/core/tasks/msgs"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/nyaruka/mailroom/utils/queues"
 	"github.com/nyaruka/mailroom/web"
 )
 
@@ -79,6 +78,7 @@ func handleBroadcast(ctx context.Context, rt *runtime.Runtime, r *broadcastReque
 
 	bcast := &models.Broadcast{
 		OrgID:             r.OrgID,
+		Status:            models.BroadcastStatusPending,
 		Translations:      r.Translations,
 		BaseLanguage:      r.BaseLanguage,
 		Expressions:       true,
@@ -121,7 +121,7 @@ func handleBroadcast(ctx context.Context, rt *runtime.Runtime, r *broadcastReque
 
 		rc := rt.RP.Get()
 		defer rc.Close()
-		err = tasks.Queue(rc, tasks.BatchQueue, bcast.OrgID, task, queues.HighPriority)
+		err = tasks.Queue(rc, tasks.BatchQueue, bcast.OrgID, task, true)
 		if err != nil {
 			slog.Error("error queueing broadcast task", "error", err)
 		}

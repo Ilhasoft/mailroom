@@ -419,7 +419,7 @@ func BulkUpdateCallStatuses(ctx context.Context, db DBorTx, callIDs []CallID, st
 }
 
 func (c *Call) AttachLog(ctx context.Context, db DBorTx, clog *ChannelLog) error {
-	_, err := db.ExecContext(ctx, `UPDATE ivr_call SET log_uuids = array_append(log_uuids, $2) WHERE id = $1`, c.c.ID, clog.UUID())
+	_, err := db.ExecContext(ctx, `UPDATE ivr_call SET log_uuids = array_append(log_uuids, $2) WHERE id = $1`, c.c.ID, clog.UUID)
 	if err != nil {
 		return fmt.Errorf("error attaching log to call: %w", err)
 	}

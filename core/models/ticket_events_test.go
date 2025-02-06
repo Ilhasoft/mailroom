@@ -18,15 +18,15 @@ func TestTicketEvents(t *testing.T) {
 
 	defer testsuite.Reset(testsuite.ResetData)
 
-	ticket := testdata.InsertOpenTicket(rt, testdata.Org1, testdata.Cathy, testdata.DefaultTopic, "Have you seen my cookies?", time.Now(), nil)
+	ticket := testdata.InsertOpenTicket(rt, testdata.Org1, testdata.Cathy, testdata.DefaultTopic, time.Now(), nil)
 	modelTicket := ticket.Load(rt)
 
-	e1 := models.NewTicketOpenedEvent(modelTicket, testdata.Admin.ID, testdata.Agent.ID)
+	e1 := models.NewTicketOpenedEvent(modelTicket, testdata.Admin.ID, testdata.Agent.ID, "this is a note")
 	assert.Equal(t, testdata.Org1.ID, e1.OrgID())
 	assert.Equal(t, testdata.Cathy.ID, e1.ContactID())
 	assert.Equal(t, ticket.ID, e1.TicketID())
 	assert.Equal(t, models.TicketEventTypeOpened, e1.EventType())
-	assert.Equal(t, null.NullString, e1.Note())
+	assert.Equal(t, null.String("this is a note"), e1.Note())
 	assert.Equal(t, testdata.Admin.ID, e1.CreatedByID())
 
 	e2 := models.NewTicketAssignedEvent(modelTicket, testdata.Admin.ID, testdata.Agent.ID)

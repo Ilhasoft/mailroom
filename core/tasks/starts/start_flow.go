@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/nyaruka/gocommon/i18n"
@@ -13,7 +14,6 @@ import (
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/core/tasks/ivr"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/nyaruka/mailroom/utils/queues"
 )
 
 const (
@@ -46,7 +46,7 @@ func (t *StartFlowTask) WithAssets() models.Refresh {
 
 func (t *StartFlowTask) Perform(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets) error {
 	if err := createFlowStartBatches(ctx, rt, oa, t.FlowStart); err != nil {
-		models.MarkStartFailed(ctx, rt.DB, t.FlowStart.ID)
+		t.FlowStart.SetFailed(ctx, rt.DB)
 
 		// if error is user created query error.. don't escalate error to sentry
 		isQueryError, _ := contactql.IsQueryError(err)
@@ -96,43 +96,36 @@ func createFlowStartBatches(ctx context.Context, rt *runtime.Runtime, oa *models
 		}
 	}
 
-	// mark our start as starting, last task will mark as complete
-	err = models.MarkStartStarted(ctx, rt.DB, start.ID, len(contactIDs))
-	if err != nil {
-		return fmt.Errorf("error marking start as started: %w", err)
+	// mark our start as queued
+	if err := start.SetQueued(ctx, rt.DB, len(contactIDs)); err != nil {
+		return fmt.Errorf("error marking start as queued: %w", err)
 	}
 
 	// if there are no contacts to start, mark our start as complete, we are done
 	if len(contactIDs) == 0 {
-		err = models.MarkStartComplete(ctx, rt.DB, start.ID)
-		if err != nil {
+		if err := start.SetCompleted(ctx, rt.DB); err != nil {
 			return fmt.Errorf("error marking start as complete: %w", err)
 		}
 		return nil
 	}
 
-	// split the contact ids into batches to become batch tasks
-	idBatches := models.ChunkSlice(contactIDs, startBatchSize)
-
-	// by default we start in the batch queue unless we have two or fewer contacts
-	q := tasks.BatchQueue
-	if len(contactIDs) <= 2 {
+	// batches will be processed in the throttled queue unless we're a single contact
+	q := tasks.ThrottledQueue
+	if len(contactIDs) == 1 {
 		q = tasks.HandlerQueue
 	}
 
-	// if this is a big multi batch blast, give it low priority
-	priority := queues.DefaultPriority
-	if len(idBatches) > 1 {
-		priority = queues.LowPriority
-	}
+	// split the contact ids into batches to become batch tasks
+	idBatches := slices.Collect(slices.Chunk(contactIDs, startBatchSize))
 
 	rc := rt.RP.Get()
 	defer rc.Close()
 
 	for i, idBatch := range idBatches {
+		isFirst := (i == 0)
 		isLast := (i == len(idBatches)-1)
 
-		batch := start.CreateBatch(idBatch, flow.FlowType(), isLast, len(contactIDs))
+		batch := start.CreateBatch(idBatch, isFirst, isLast, len(contactIDs))
 
 		// task is different if we are an IVR flow
 		var batchTask tasks.Task
@@ -142,7 +135,7 @@ func createFlowStartBatches(ctx context.Context, rt *runtime.Runtime, oa *models
 			batchTask = &StartFlowBatchTask{FlowStartBatch: batch}
 		}
 
-		err = tasks.Queue(rc, q, start.OrgID, batchTask, priority)
+		err = tasks.Queue(rc, q, start.OrgID, batchTask, false)
 		if err != nil {
 			if i == 0 {
 				return fmt.Errorf("error queuing flow start batch: %w", err)

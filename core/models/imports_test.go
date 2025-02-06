@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nyaruka/gocommon/dbutil"
 	"github.com/nyaruka/gocommon/dbutil/assertdb"
@@ -63,7 +64,7 @@ func TestContactImports(t *testing.T) {
 	oa, err := models.GetOrgAssetsWithRefresh(ctx, rt, testdata.Org1.ID, models.RefreshOrg|models.RefreshChannels|models.RefreshGroups)
 	require.NoError(t, err)
 
-	uuids.SetGenerator(uuids.NewSeededGenerator(12345))
+	uuids.SetGenerator(uuids.NewSeededGenerator(12345, time.Now))
 	defer uuids.SetGenerator(uuids.DefaultGenerator)
 
 	for i, tc := range tcs {

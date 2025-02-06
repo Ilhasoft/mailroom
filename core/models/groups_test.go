@@ -3,7 +3,6 @@ package models_test
 import (
 	"testing"
 
-	"github.com/nyaruka/goflow/assets"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/testsuite"
 	"github.com/nyaruka/mailroom/testsuite/testdata"
@@ -19,29 +18,26 @@ func TestLoadGroups(t *testing.T) {
 
 	groups, err := oa.Groups()
 	require.NoError(t, err)
+	assert.Len(t, groups, 3) // excludes the status groups
+	assert.Equal(t, testdata.DoctorsGroup.UUID, groups[0].UUID())
+	assert.Equal(t, "Doctors", groups[0].Name())
 
 	tcs := []struct {
-		id            models.GroupID
-		uuid          assets.GroupUUID
+		group         *testdata.Group
 		name          string
 		query         string
 		expectedCount int
 	}{
-		{testdata.ActiveGroup.ID, testdata.ActiveGroup.UUID, "Active", "", 124},
-		{testdata.ArchivedGroup.ID, testdata.ArchivedGroup.UUID, "Archived", "", 0},
-		{testdata.BlockedGroup.ID, testdata.BlockedGroup.UUID, "Blocked", "", 0},
-		{testdata.DoctorsGroup.ID, testdata.DoctorsGroup.UUID, "Doctors", "", 121},
-		{testdata.OpenTicketsGroup.ID, testdata.OpenTicketsGroup.UUID, "Open Tickets", "tickets > 0", 0},
-		{testdata.StoppedGroup.ID, testdata.StoppedGroup.UUID, "Stopped", "", 0},
-		{testdata.TestersGroup.ID, testdata.TestersGroup.UUID, "Testers", "", 10},
+		{testdata.ActiveGroup, "\\Active", "", 124},
+		{testdata.BlockedGroup, "\\Blocked", "", 0},
+		{testdata.DoctorsGroup, "Doctors", "", 121},
+		{testdata.OpenTicketsGroup, "Open Tickets", "tickets > 0", 0},
 	}
 
-	assert.Equal(t, 7, len(groups))
-
-	for i, tc := range tcs {
-		group := groups[i].(*models.Group)
-		assert.Equal(t, tc.uuid, group.UUID())
-		assert.Equal(t, tc.id, group.ID())
+	for _, tc := range tcs {
+		group := oa.GroupByUUID(tc.group.UUID)
+		assert.Equal(t, tc.group.UUID, group.UUID())
+		assert.Equal(t, tc.group.ID, group.ID())
 		assert.Equal(t, tc.name, group.Name())
 		assert.Equal(t, tc.query, group.Query())
 

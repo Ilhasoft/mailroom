@@ -1,6 +1,7 @@
 package queues_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -17,13 +18,13 @@ func TestQueues(t *testing.T) {
 	rc := rt.RP.Get()
 	defer rc.Close()
 
-	dates.SetNowSource(dates.NewSequentialNowSource(time.Date(2022, 1, 1, 12, 1, 2, 123456789, time.UTC)))
-	defer dates.SetNowSource(dates.DefaultNowSource)
+	dates.SetNowFunc(dates.NewSequentialNow(time.Date(2022, 1, 1, 12, 1, 2, 123456789, time.UTC), time.Second))
+	defer dates.SetNowFunc(time.Now)
 
 	defer testsuite.Reset(testsuite.ResetRedis)
 
-	q := queues.NewFairSorted("test")
-	assert.Equal(t, "test", q.String())
+	var q queues.Fair = queues.NewFairSorted("test")
+	assert.Equal(t, "test", fmt.Sprint(q))
 
 	assertPop := func(expectedOwnerID int, expectedBody string) {
 		task, err := q.Pop(rc)
@@ -42,13 +43,19 @@ func TestQueues(t *testing.T) {
 		assert.Equal(t, expecting, size)
 	}
 
+	assertOwners := func(expected []int) {
+		actual, err := q.Owners(rc)
+		assert.NoError(t, err)
+		assert.ElementsMatch(t, expected, actual)
+	}
+
 	assertSize(0)
 
-	q.Push(rc, "type1", 1, "task1", queues.DefaultPriority)
-	q.Push(rc, "type1", 1, "task2", queues.HighPriority)
-	q.Push(rc, "type1", 2, "task3", queues.LowPriority)
-	q.Push(rc, "type2", 1, "task4", queues.DefaultPriority)
-	q.Push(rc, "type2", 2, "task5", queues.DefaultPriority)
+	q.Push(rc, "type1", 1, "task1", false)
+	q.Push(rc, "type1", 1, "task2", true)
+	q.Push(rc, "type1", 2, "task3", false)
+	q.Push(rc, "type2", 1, "task4", false)
+	q.Push(rc, "type2", 2, "task5", true)
 
 	// nobody processing any tasks so no workers assigned in active set
 	assertredis.ZGetAll(t, rc, "test:active", map[string]float64{"1": 0, "2": 0})
@@ -59,8 +66,8 @@ func TestQueues(t *testing.T) {
 		`{"type":"type2","task":"task4","queued_on":"2022-01-01T12:01:09.123456789Z"}`: 1641038468.123456,
 	})
 	assertredis.ZGetAll(t, rc, "test:2", map[string]float64{
-		`{"type":"type1","task":"task3","queued_on":"2022-01-01T12:01:07.123456789Z"}`: 1651038466.123456,
-		`{"type":"type2","task":"task5","queued_on":"2022-01-01T12:01:11.123456789Z"}`: 1641038470.123456,
+		`{"type":"type1","task":"task3","queued_on":"2022-01-01T12:01:07.123456789Z"}`: 1641038466.123456,
+		`{"type":"type2","task":"task5","queued_on":"2022-01-01T12:01:11.123456789Z"}`: 1631038470.123456,
 	})
 
 	assertSize(5)
@@ -72,6 +79,7 @@ func TestQueues(t *testing.T) {
 	assertPop(1, `"task1"`)
 	assertredis.ZGetAll(t, rc, "test:active", map[string]float64{"1": 2, "2": 1})
 
+	assertOwners([]int{1, 2})
 	assertSize(2)
 
 	// mark task2 and task1 (owner 1) as complete
@@ -88,9 +96,39 @@ func TestQueues(t *testing.T) {
 
 	assertredis.ZGetAll(t, rc, "test:active", map[string]float64{})
 
-	//  if we somehow get into a state where an owner is in the active set but doesn't have queued tasks, pop will retry
-	q.Push(rc, "type1", 1, "task6", queues.DefaultPriority)
-	q.Push(rc, "type1", 2, "task7", queues.DefaultPriority)
+	q.Push(rc, "type1", 1, "task6", false)
+	q.Push(rc, "type1", 1, "task7", false)
+	q.Push(rc, "type1", 2, "task8", false)
+	q.Push(rc, "type1", 2, "task9", false)
+
+	assertPop(1, `"task6"`)
+
+	q.Pause(rc, 1)
+	q.Pause(rc, 1) // no-op if already paused
+
+	assertredis.ZGetAll(t, rc, "test:active", map[string]float64{"1": 1000001, "2": 0})
+	assertOwners([]int{1, 2})
+
+	assertPop(2, `"task8"`)
+	assertPop(2, `"task9"`)
+	assertPop(0, "") // no more tasks
+
+	q.Resume(rc, 1)
+	q.Resume(rc, 1) // no-op if already active
+
+	assertredis.ZGetAll(t, rc, "test:active", map[string]float64{"1": 1})
+	assertOwners([]int{1})
+
+	assertPop(1, `"task7"`)
+
+	q.Done(rc, 1)
+	q.Done(rc, 1)
+	q.Done(rc, 2)
+	q.Done(rc, 2)
+
+	// if we somehow get into a state where an owner is in the active set but doesn't have queued tasks, pop will retry
+	q.Push(rc, "type1", 1, "task6", false)
+	q.Push(rc, "type1", 2, "task7", false)
 
 	rc.Do("ZREMRANGEBYRANK", "test:1", 0, 1)
 
@@ -98,7 +136,7 @@ func TestQueues(t *testing.T) {
 	assertPop(0, "")
 
 	// if we somehow call done too many times, we never get negative workers
-	q.Push(rc, "type1", 1, "task8", queues.DefaultPriority)
+	q.Push(rc, "type1", 1, "task8", false)
 	q.Done(rc, 1)
 	q.Done(rc, 1)
 

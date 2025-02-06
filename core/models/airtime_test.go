@@ -30,8 +30,7 @@ func TestAirtimeTransfers(t *testing.T) {
 		urns.URN("tel:+250700000001"),
 		urns.URN("tel:+250700000002"),
 		"RWF",
-		decimal.RequireFromString(`1100`),
-		decimal.RequireFromString(`1000`),
+		decimal.RequireFromString(`100`),
 		time.Now(),
 	)
 	err := models.InsertAirtimeTransfers(ctx, rt.DB, []*models.AirtimeTransfer{transfer})
@@ -49,7 +48,6 @@ func TestAirtimeTransfers(t *testing.T) {
 		urns.NilURN,
 		urns.URN("tel:+250700000002"),
 		"",
-		decimal.Zero,
 		decimal.Zero,
 		time.Now(),
 	)

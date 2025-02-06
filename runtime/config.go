@@ -57,28 +57,25 @@ type Config struct {
 	ElasticPassword      string `help:"the password for ElasticSearch if using basic auth"`
 	ElasticContactsIndex string `help:"the name of index alias for contacts"`
 
-	S3Endpoint           string `help:"the S3 endpoint we will write attachments to"`
-	S3Region             string `help:"the S3 region we will write attachments to"`
-	S3AttachmentsBucket  string `help:"the S3 bucket we will write attachments to"`
-	S3AttachmentsPrefix  string `help:"the prefix that will be added to attachment filenames"`
-	S3SessionsBucket     string `help:"the S3 bucket we will write attachments to"`
-	S3LogsBucket         string `help:"the S3 bucket we will write logs to"`
-	S3SessionPrefix      string `help:"the prefix that will be added to attachment filenames"`
-	S3MediaPrefixZendesk string `help:"the prefix that will be added to file attachment names for Zendesk tickets"`
-	S3DisableSSL         bool   `help:"whether we disable SSL when accessing S3. Should always be set to False unless you're hosting an S3 compatible service within a secure internal network"`
-	S3ForcePathStyle     bool   `help:"whether we force S3 path style. Should generally need to default to False unless you're hosting an S3 compatible service"`
+	AWSAccessKeyID     string `help:"access key ID to use for AWS services"`
+	AWSSecretAccessKey string `help:"secret access key to use for AWS services"`
+	AWSRegion          string `help:"region to use for AWS services, e.g. us-east-1"`
 
-	AWSAccessKeyID     string `help:"the access key id to use when authenticating S3"`
-	AWSSecretAccessKey string `help:"the secret access key id to use when authenticating S3"`
-	AWSUseCredChain    bool   `help:"whether to use the AWS credentials chain. Defaults to false."`
+	DynamoEndpoint    string `help:"DynamoDB service endpoint, e.g. https://dynamodb.us-east-1.amazonaws.com"`
+	DynamoTablePrefix string `help:"prefix to use for DynamoDB tables"`
 
-	CourierAuthToken string `help:"the authentication token used for requests to Courier"`
-	LibratoUsername  string `help:"the username that will be used to authenticate to Librato"`
-	LibratoToken     string `help:"the token that will be used to authenticate to Librato"`
+	S3Endpoint          string `help:"S3 service endpoint, e.g. https://s3.amazonaws.com"`
+	S3AttachmentsBucket string `help:"S3 bucket to write attachments to"`
+	S3SessionsBucket    string `help:"S3 bucket to write flow sessions to"`
+	S3Minio             bool   `help:"S3 is actually Minio or other compatible service"`
 
+	CloudwatchNamespace string `help:"the namespace to use for cloudwatch metrics"`
+	DeploymentID        string `help:"the deployment identifier to use for metrics"`
+	InstanceID          string `help:"the instance identifier to use for metrics"`
+
+	CourierAuthToken       string `help:"the authentication token used for requests to Courier"`
 	AndroidCredentialsFile string `help:"path to JSON file with FCM service account credentials used to sync Android relayers"`
 
-	InstanceID          string     `help:"the unique identifier of this instance, defaults to hostname"`
 	LogLevel            slog.Level `help:"the logging level courier should use"`
 	UUIDSeed            int        `help:"seed to use for UUID generation in a testing environment"`
 	Version             string     `help:"the version of this mailroom install"`
@@ -124,23 +121,24 @@ func NewDefaultConfig() *Config {
 		ElasticPassword:      "",
 		ElasticContactsIndex: "contacts",
 
-		S3Endpoint:          "https://s3.amazonaws.com",
-		S3Region:            "us-east-1",
-		S3AttachmentsBucket: "attachments-bucket",
-		S3AttachmentsPrefix: "attachments/",
-		S3SessionsBucket:    "sessions-bucket",
-		S3LogsBucket:        "logs-bucket",
-		S3DisableSSL:        false,
-		S3ForcePathStyle:    false,
-
 		AWSAccessKeyID:     "",
 		AWSSecretAccessKey: "",
-		AWSUseCredChain:    false,
+		AWSRegion:          "us-east-1",
 
-		InstanceID: hostname,
-		LogLevel:   slog.LevelWarn,
-		UUIDSeed:   0,
-		Version:    "Dev",
+		DynamoEndpoint:    "", // let library generate it
+		DynamoTablePrefix: "Temba",
+
+		S3Endpoint:          "https://s3.amazonaws.com",
+		S3AttachmentsBucket: "temba-attachments",
+		S3SessionsBucket:    "temba-sessions",
+
+		CloudwatchNamespace: "Temba/Mailroom",
+		DeploymentID:        "dev",
+		InstanceID:          hostname,
+
+		LogLevel: slog.LevelWarn,
+		UUIDSeed: 0,
+		Version:  "Dev",
 	}
 }
 

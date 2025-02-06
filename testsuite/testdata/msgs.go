@@ -51,7 +51,7 @@ type Template struct {
 
 // InsertIncomingMsg inserts an incoming text message
 func InsertIncomingMsg(rt *runtime.Runtime, org *Org, channel *Channel, contact *Contact, text string, status models.MsgStatus) *MsgIn {
-	msgUUID := flows.MsgUUID(uuids.New())
+	msgUUID := flows.MsgUUID(uuids.NewV4())
 	var id models.MsgID
 	must(rt.DB.Get(&id,
 		`INSERT INTO msgs_msg(uuid, text, created_on, modified_on, direction, msg_type, status, visibility, msg_count, error_count, next_attempt, contact_id, contact_urn_id, org_id, channel_id)
@@ -129,7 +129,7 @@ func InsertBroadcast(rt *runtime.Runtime, org *Org, baseLanguage i18n.Language, 
 
 // InsertOptIn inserts an opt in
 func InsertOptIn(rt *runtime.Runtime, org *Org, name string) *OptIn {
-	uuid := assets.OptInUUID(uuids.New())
+	uuid := assets.OptInUUID(uuids.NewV4())
 	var id models.OptInID
 	must(rt.DB.Get(&id,
 		`INSERT INTO msgs_optin(uuid, org_id, name, created_on, modified_on, created_by_id, modified_by_id, is_active, is_system) 
@@ -140,7 +140,7 @@ func InsertOptIn(rt *runtime.Runtime, org *Org, name string) *OptIn {
 
 // InsertTemplate inserts a template
 func InsertTemplate(rt *runtime.Runtime, org *Org, name string) *Template {
-	uuid := assets.TemplateUUID(uuids.New())
+	uuid := assets.TemplateUUID(uuids.NewV4())
 	var id models.TemplateID
 	must(rt.DB.Get(&id,
 		`INSERT INTO templates_template(uuid, org_id, name, created_on, modified_on) 

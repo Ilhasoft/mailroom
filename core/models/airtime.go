@@ -49,7 +49,7 @@ type AirtimeTransfer struct {
 }
 
 // NewAirtimeTransfer creates a new airtime transfer returning the result
-func NewAirtimeTransfer(uuid flows.AirtimeTransferUUID, orgID OrgID, status AirtimeTransferStatus, externalID string, contactID ContactID, sender urns.URN, recipient urns.URN, currency string, desiredAmount decimal.Decimal, actualAmount decimal.Decimal, createdOn time.Time) *AirtimeTransfer {
+func NewAirtimeTransfer(uuid flows.AirtimeTransferUUID, orgID OrgID, status AirtimeTransferStatus, externalID string, contactID ContactID, sender urns.URN, recipient urns.URN, currency string, amount decimal.Decimal, createdOn time.Time) *AirtimeTransfer {
 	t := &AirtimeTransfer{}
 	t.t.UUID = uuid
 	t.t.OrgID = orgID
@@ -59,8 +59,8 @@ func NewAirtimeTransfer(uuid flows.AirtimeTransferUUID, orgID OrgID, status Airt
 	t.t.Sender = null.String(string(sender))
 	t.t.Recipient = recipient
 	t.t.Currency = null.String(currency)
-	t.t.DesiredAmount = desiredAmount
-	t.t.ActualAmount = actualAmount
+	t.t.DesiredAmount = amount
+	t.t.ActualAmount = amount
 	t.t.CreatedOn = createdOn
 	return t
 }

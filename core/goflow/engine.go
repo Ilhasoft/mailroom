@@ -105,17 +105,15 @@ type simulatorAirtimeService struct{}
 
 func (s *simulatorAirtimeService) Transfer(sender urns.URN, recipient urns.URN, amounts map[string]decimal.Decimal, logHTTP flows.HTTPLogCallback) (*flows.AirtimeTransfer, error) {
 	transfer := &flows.AirtimeTransfer{
-		Sender:        sender,
-		Recipient:     recipient,
-		DesiredAmount: decimal.Zero,
-		ActualAmount:  decimal.Zero,
+		Sender:    sender,
+		Recipient: recipient,
+		Amount:    decimal.Zero,
 	}
 
 	// pick arbitrary currency/amount pair in map
 	for currency, amount := range amounts {
 		transfer.Currency = currency
-		transfer.DesiredAmount = amount
-		transfer.ActualAmount = amount
+		transfer.Amount = amount
 		break
 	}
 

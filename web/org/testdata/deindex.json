@@ -1,0 +1,45 @@
+[
+    {
+        "label": "illegal method",
+        "method": "GET",
+        "path": "/mr/org/deindex",
+        "status": 405,
+        "response": {
+            "error": "illegal method: GET"
+        }
+    },
+    {
+        "label": "invalid org_id",
+        "method": "POST",
+        "path": "/mr/org/deindex",
+        "body": {
+            "org_id": 1234
+        },
+        "status": 500,
+        "response": {
+            "error": "error querying org #1234: sql: no rows in result set"
+        }
+    },
+    {
+        "label": "org is still active",
+        "method": "POST",
+        "path": "/mr/org/deindex",
+        "body": {
+            "org_id": 2
+        },
+        "status": 500,
+        "response": {
+            "error": "can't deindex active org #2"
+        }
+    },
+    {
+        "label": "org is inactive",
+        "method": "POST",
+        "path": "/mr/org/deindex",
+        "body": {
+            "org_id": 1
+        },
+        "status": 200,
+        "response": {}
+    }
+]

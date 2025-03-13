@@ -23,6 +23,7 @@ var expirationsMarker = redisx.NewIntervalSet("run_expirations", time.Hour*24, 2
 
 func init() {
 	mailroom.RegisterCron("run_expirations", time.Minute, false, HandleWaitExpirations)
+	mailroom.RegisterCron("expire_ivr_calls", time.Minute, false, ExpireVoiceSessions)
 }
 
 // HandleWaitExpirations handles waiting messaging sessions whose waits have expired, resuming those that can be resumed,

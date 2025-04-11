@@ -44,7 +44,7 @@ func HandleWork(id int, rt *runtime.Runtime, wg *sync.WaitGroup, jobChannel <-ch
 }
 
 func RetryCall(workerId int, rt *runtime.Runtime, conn *models.ChannelConnection) error {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*1)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*1)
 	defer cancel()
 	oa, err := models.GetOrgAssets(ctx, rt, conn.OrgID())
 	if err != nil {

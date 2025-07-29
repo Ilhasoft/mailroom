@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	outboxThreshold = 10_000
+	outboxThreshold = 30_000
 )
 
 func init() {

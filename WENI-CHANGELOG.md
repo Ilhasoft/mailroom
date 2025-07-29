@@ -1,3 +1,7 @@
+1.4.21-mailroom-10.0.0
+----------
+ * Update outboxThreshold to 30000
+
 1.4.20-mailroom-10.0.0
 ----------
  * Add dynamodb aws region config variable

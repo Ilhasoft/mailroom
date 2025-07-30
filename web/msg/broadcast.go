@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -119,11 +118,11 @@ func handleBroadcast(ctx context.Context, rt *runtime.Runtime, r *broadcastReque
 	if r.Schedule == nil {
 		task := &msgs.SendBroadcastTask{Broadcast: bcast}
 
-		rc := rt.RP.Get()
+		rc := rt.VK.Get()
 		defer rc.Close()
-		err = tasks.Queue(rc, tasks.BatchQueue, bcast.OrgID, task, true)
-		if err != nil {
-			slog.Error("error queueing broadcast task", "error", err)
+
+		if err := tasks.Queue(rc, tasks.BatchQueue, bcast.OrgID, task, true); err != nil {
+			return nil, 0, fmt.Errorf("error queuing send broadcast task: %w", err)
 		}
 	}
 

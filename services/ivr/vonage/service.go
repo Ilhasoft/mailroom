@@ -32,6 +32,7 @@ import (
 	"github.com/nyaruka/goflow/utils"
 	"github.com/nyaruka/mailroom/core/ivr"
 	"github.com/nyaruka/mailroom/core/models"
+	"github.com/nyaruka/mailroom/core/runner"
 	"github.com/nyaruka/mailroom/runtime"
 )
 
@@ -71,13 +72,13 @@ type service struct {
 }
 
 func init() {
-	ivr.RegisterServiceType(vonageChannelType, NewServiceFromChannel)
+	ivr.RegisterService(vonageChannelType, NewServiceFromChannel)
 }
 
 // NewServiceFromChannel creates a new Vonage IVR service for the passed in account and and auth token
 func NewServiceFromChannel(httpClient *http.Client, channel *models.Channel) (ivr.Service, error) {
-	appID := channel.ConfigValue(appIDConfig, "")
-	key := channel.ConfigValue(privateKeyConfig, "")
+	appID := channel.Config().GetString(appIDConfig, "")
+	key := channel.Config().GetString(privateKeyConfig, "")
 	if appID == "" || key == "" {
 		return nil, fmt.Errorf("missing %s or %s on channel config", appIDConfig, privateKeyConfig)
 	}
@@ -199,13 +200,11 @@ func (s *service) PreprocessStatus(ctx context.Context, rt *runtime.Runtime, r *
 	}
 
 	// look up to see whether this is a call we need to track
-	rc := rt.RP.Get()
+	rc := rt.VK.Get()
 	defer rc.Close()
 
-	redisKey := fmt.Sprintf("dial_%s", legUUID)
-	dialContinue, err := redis.String(rc.Do("get", redisKey))
-
-	slog.Debug("looking up dial continue", "error", err, "status", nxStatus, "redisKey", redisKey, "redisValue", dialContinue)
+	legKey := fmt.Sprintf("dial_%s", legUUID)
+	dialContinue, err := redis.String(rc.Do("get", legKey))
 
 	// no associated call, move on
 	if err == redis.ErrNil {
@@ -213,7 +212,7 @@ func (s *service) PreprocessStatus(ctx context.Context, rt *runtime.Runtime, r *
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("error looking up leg uuid: %s: %w", redisKey, err)
+		return nil, fmt.Errorf("error looking up leg uuid: %s: %w", legKey, err)
 	}
 
 	// transfer the call back to our handle with the dial wait type
@@ -221,7 +220,7 @@ func (s *service) PreprocessStatus(ctx context.Context, rt *runtime.Runtime, r *
 	callUUID, resumeURL := parts[0], parts[1]
 
 	// we found an associated call, if the status is complete, have it continue, we call out to
-	// redis and hand it our flow to resume on to get the next NCCO
+	// vonage and hand it our flow to resume on to get the next NCCO
 	if nxStatus == "completed" {
 		slog.Debug("found completed call, trying to finish with call", "call_uuid", callUUID)
 		statusKey := fmt.Sprintf("dial_status_%s", callUUID)
@@ -266,13 +265,14 @@ func (s *service) PreprocessStatus(ctx context.Context, rt *runtime.Runtime, r *
 
 	// only store away valid final states
 	if status != "" {
-		redisKey := fmt.Sprintf("dial_status_%s", callUUID)
-		_, err = rc.Do("setex", redisKey, 300, status)
+		callKey := fmt.Sprintf("dial_status_%s", callUUID)
+		_, err = rc.Do("setex", callKey, 300, status)
 		if err != nil {
-			return nil, fmt.Errorf("error inserting recording URL into redis: %w", err)
+			return nil, fmt.Errorf("error inserting recording URL into valkey: %w", err)
 		}
 
-		slog.Debug("saved intermediary dial status for call", "callUUID", callUUID, "status", status, "redisKey", redisKey)
+		slog.Debug("saved intermediary dial status for call", "callUUID", callUUID, "status", status, "key", callKey)
+
 		return s.MakeEmptyResponseBody(fmt.Sprintf("updated status for call: %s to: %s", callUUID, status)), nil
 	}
 
@@ -290,20 +290,20 @@ func (s *service) PreprocessResume(ctx context.Context, rt *runtime.Runtime, cal
 			return nil, fmt.Errorf("record resume without recording_uuid")
 		}
 
-		rc := rt.RP.Get()
+		rc := rt.VK.Get()
 		defer rc.Close()
 
-		redisKey := fmt.Sprintf("recording_%s", recordingUUID)
-		recordingURL, err := redis.String(rc.Do("get", redisKey))
+		recordingKey := fmt.Sprintf("recording_%s", recordingUUID)
+		recordingURL, err := redis.String(rc.Do("get", recordingKey))
 		if err != nil && err != redis.ErrNil {
-			return nil, fmt.Errorf("error getting recording url from redis: %w", err)
+			return nil, fmt.Errorf("error getting recording url from valkey: %w", err)
 		}
 
 		// found a URL, stuff it in our request and move on
 		if recordingURL != "" {
 			r.URL.RawQuery = "&recording_url=" + url.QueryEscape(recordingURL)
 			slog.Info("found recording URL", "recording_url", recordingURL)
-			rc.Do("del", redisKey)
+			rc.Do("del", recordingKey)
 			return nil, nil
 		}
 
@@ -345,13 +345,13 @@ func (s *service) PreprocessResume(ctx context.Context, rt *runtime.Runtime, cal
 		}
 
 		// write it to redis
-		rc := rt.RP.Get()
+		rc := rt.VK.Get()
 		defer rc.Close()
 
-		redisKey := fmt.Sprintf("recording_%s", recordingUUID)
-		_, err = rc.Do("setex", redisKey, 300, recordingURL)
+		recordingKey := fmt.Sprintf("recording_%s", recordingUUID)
+		_, err = rc.Do("setex", recordingKey, 300, recordingURL)
 		if err != nil {
-			return nil, fmt.Errorf("error inserting recording URL into redis: %w", err)
+			return nil, fmt.Errorf("error inserting recording URL into valkey: %w", err)
 		}
 
 		msgBody := map[string]string{
@@ -588,20 +588,14 @@ func (s *service) ValidateRequestSignature(r *http.Request) error {
 }
 
 // WriteSessionResponse writes a NCCO response for the events in the passed in session
-func (s *service) WriteSessionResponse(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, channel *models.Channel, call *models.Call, session *models.Session, number urns.URN, resumeURL string, r *http.Request, w http.ResponseWriter) error {
+func (s *service) WriteSessionResponse(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, channel *models.Channel, scene *runner.Scene, number urns.URN, resumeURL string, r *http.Request, w http.ResponseWriter) error {
 	// for errored sessions we should just output our error body
-	if session.Status() == models.SessionStatusFailed {
+	if scene.Session.Status() == flows.SessionStatusFailed {
 		return fmt.Errorf("cannot write IVR response for failed session")
 	}
 
-	// otherwise look for any say events
-	sprint := session.Sprint()
-	if sprint == nil {
-		return fmt.Errorf("cannot write IVR response for session with no sprint")
-	}
-
 	// get our response
-	response, err := s.responseForSprint(ctx, rt.RP, channel, call, resumeURL, sprint.Events())
+	response, err := s.responseForSprint(ctx, rt.VK, channel, scene.DBCall, resumeURL, scene.Sprint.Events())
 	if err != nil {
 		return fmt.Errorf("unable to build response for IVR call: %w", err)
 	}
@@ -730,16 +724,16 @@ func (s *service) responseForSprint(ctx context.Context, rp *redis.Pool, channel
 	var waitEvent flows.Event
 	for _, e := range es {
 		switch event := e.(type) {
-		case *events.MsgWaitEvent, *events.DialWaitEvent:
+		case *events.MsgWait, *events.DialWait:
 			waitEvent = event
 		}
 	}
 
 	if waitEvent != nil {
 		switch wait := waitEvent.(type) {
-		case *events.MsgWaitEvent:
+		case *events.MsgWait:
 			switch hint := wait.Hint.(type) {
-			case *hints.DigitsHint:
+			case *hints.Digits:
 				eventURL := resumeURL + "&wait_type=gather"
 				eventURL = eventURL + "&sig=" + url.QueryEscape(s.calculateSignature(eventURL))
 				input := &Input{
@@ -757,7 +751,7 @@ func (s *service) responseForSprint(ctx context.Context, rp *redis.Pool, channel
 				}
 				waitActions = append(waitActions, input)
 
-			case *hints.AudioHint:
+			case *hints.Audio:
 				// Vonage is goofy in that they do not synchronously send us recordings. Rather the move on in
 				// the NCCO script immediately and then asynchronously call the event URL on the record URL
 				// when the recording is ready.
@@ -797,7 +791,7 @@ func (s *service) responseForSprint(ctx context.Context, rp *redis.Pool, channel
 				return "", fmt.Errorf("unable to use wait in IVR call, unknow hint type: %s", wait.Hint.Type())
 			}
 
-		case *events.DialWaitEvent:
+		case *events.DialWait:
 			// Vonage handles forwards a bit differently. We have to create a new call to the forwarded number, then
 			// join the current call with the call we are starting.
 			//
@@ -842,13 +836,13 @@ func (s *service) responseForSprint(ctx context.Context, rp *redis.Pool, channel
 			defer rc.Close()
 
 			eventURL := resumeURL + "&wait_type=dial"
-			redisKey := fmt.Sprintf("dial_%s", transferUUID)
-			redisValue := fmt.Sprintf("%s:%s", call.ExternalID(), eventURL)
-			_, err = rc.Do("setex", redisKey, 3600, redisValue)
+			vkKey := fmt.Sprintf("dial_%s", transferUUID)
+			vkValue := fmt.Sprintf("%s:%s", call.ExternalID(), eventURL)
+			_, err = rc.Do("setex", vkKey, 3600, vkValue)
 			if err != nil {
-				return "", fmt.Errorf("error inserting transfer ID into redis: %w", err)
+				return "", fmt.Errorf("error inserting transfer ID into valkey: %w", err)
 			}
-			slog.Debug("saved away call", "transferUUID", transferUUID, "callID", call.ExternalID(), "redisKey", redisKey, "redisValue", redisValue)
+			slog.Debug("saved away call", "transferUUID", transferUUID, "call", call.ExternalID(), "valkey_key", vkKey, "valkey_value", vkValue)
 		}
 	}
 
@@ -859,7 +853,7 @@ func (s *service) responseForSprint(ctx context.Context, rp *redis.Pool, channel
 
 	for _, e := range es {
 		switch event := e.(type) {
-		case *events.IVRCreatedEvent:
+		case *events.IVRCreated:
 			if len(event.Msg.Attachments()) == 0 {
 				actions = append(actions, Talk{
 					Action:  "talk",
@@ -894,5 +888,5 @@ func (s *service) responseForSprint(ctx context.Context, rp *redis.Pool, channel
 }
 
 func (s *service) RedactValues(ch *models.Channel) []string {
-	return []string{ch.ConfigValue(privateKeyConfig, "")}
+	return []string{ch.Config().GetString(privateKeyConfig, "")}
 }

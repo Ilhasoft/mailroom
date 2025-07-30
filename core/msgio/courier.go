@@ -59,15 +59,24 @@ type Templating struct {
 	Language   string `json:"language"`
 }
 
+type Session struct {
+	UUID       flows.SessionUUID `json:"uuid"`
+	Status     string            `json:"status"`
+	SprintUUID flows.SprintUUID  `json:"sprint_uuid"`
+	Timeout    int               `json:"timeout,omitempty"`
+}
+
+var sessionStatusMap = map[flows.SessionStatus]string{flows.SessionStatusWaiting: "W", flows.SessionStatusCompleted: "C"}
+
 // Msg is the format of a message queued to courier
 type Msg struct {
 	ID                   models.MsgID       `json:"id"`
-	UUID                 flows.MsgUUID      `json:"uuid"`
+	UUID                 flows.EventUUID    `json:"uuid"`
 	OrgID                models.OrgID       `json:"org_id"`
 	Origin               MsgOrigin          `json:"origin"`
 	Text                 string             `json:"text"`
 	Attachments          []utils.Attachment `json:"attachments,omitempty"`
-	QuickReplies         []string           `json:"quick_replies,omitempty"`
+	QuickReplies         []flows.QuickReply `json:"quick_replies,omitempty"`
 	Locale               i18n.Locale        `json:"locale,omitempty"`
 	Templating           *Templating        `json:"templating,omitempty"`
 	HighPriority         bool               `json:"high_priority"`
@@ -78,75 +87,70 @@ type Msg struct {
 	ContactURNID         models.URNID       `json:"contact_urn_id"`
 	URN                  urns.URN           `json:"urn"`
 	URNAuth              string             `json:"urn_auth,omitempty"`
-	Metadata             map[string]any     `json:"metadata,omitempty"`
 	Flow                 *FlowRef           `json:"flow,omitempty"`
 	UserID               models.UserID      `json:"user_id,omitempty"`
 	OptIn                *OptInRef          `json:"optin,omitempty"`
 	ResponseToExternalID string             `json:"response_to_external_id,omitempty"`
 	IsResend             bool               `json:"is_resend,omitempty"`
 
-	ContactLastSeenOn    *time.Time           `json:"contact_last_seen_on,omitempty"`
-	SessionID            models.SessionID     `json:"session_id,omitempty"`
-	SessionStatus        models.SessionStatus `json:"session_status,omitempty"`
-	SessionWaitStartedOn *time.Time           `json:"session_wait_started_on,omitempty"`
-	SessionTimeout       int                  `json:"session_timeout,omitempty"`
+	ContactLastSeenOn *time.Time `json:"contact_last_seen_on,omitempty"`
+	Session           *Session   `json:"session,omitempty"`
 }
 
 // NewCourierMsg creates a courier message in the format it's expecting to be queued
-func NewCourierMsg(oa *models.OrgAssets, m *models.Msg, u *models.ContactURN, ch *models.Channel) (*Msg, error) {
+func NewCourierMsg(oa *models.OrgAssets, mo *models.MsgOut, ch *models.Channel) (*Msg, error) {
 	msg := &Msg{
-		ID:           m.ID(),
-		UUID:         m.UUID(),
-		OrgID:        m.OrgID(),
-		Text:         m.Text(),
-		Attachments:  m.Attachments(),
-		QuickReplies: m.QuickReplies(),
-		Locale:       m.Locale(),
-		HighPriority: m.HighPriority(),
-		MsgCount:     m.MsgCount(),
-		CreatedOn:    m.CreatedOn(),
-		ContactID:    m.ContactID(),
-		ContactURNID: *m.ContactURNID(),
+		ID:           mo.ID(),
+		UUID:         mo.UUID(),
+		OrgID:        mo.OrgID(),
+		Text:         mo.Text(),
+		Attachments:  mo.Attachments(),
+		QuickReplies: mo.QuickReplies(),
+		Locale:       mo.Locale(),
+		HighPriority: mo.HighPriority(),
+		MsgCount:     mo.MsgCount(),
+		CreatedOn:    mo.CreatedOn(),
+		ContactID:    mo.ContactID(),
+		ContactURNID: mo.ContactURNID(),
 		ChannelUUID:  ch.UUID(),
-		UserID:       m.CreatedByID(),
-		URN:          u.Identity,
-		URNAuth:      string(u.AuthTokens["default"]),
-		Metadata:     m.Metadata(),
-		IsResend:     m.IsResend,
+		UserID:       mo.CreatedByID(),
+		URN:          mo.URN.Identity,
+		URNAuth:      string(mo.URN.AuthTokens["default"]),
+		IsResend:     mo.IsResend,
 	}
 
-	if m.FlowID() != models.NilFlowID {
+	if mo.FlowID() != models.NilFlowID {
 		msg.Origin = MsgOriginFlow
-		flow, _ := oa.FlowByID(m.FlowID())
+		flow, _ := oa.FlowByID(mo.FlowID())
 		if flow != nil { // always a chance flow no longer exists
 			msg.Flow = &FlowRef{UUID: flow.UUID(), Name: flow.Name()}
 		}
-	} else if m.BroadcastID() != models.NilBroadcastID {
+	} else if mo.BroadcastID() != models.NilBroadcastID {
 		msg.Origin = MsgOriginBroadcast
-	} else if m.TicketID() != models.NilTicketID {
+	} else if mo.TicketID() != models.NilTicketID {
 		msg.Origin = MsgOriginTicket
 	} else {
 		msg.Origin = MsgOriginChat
 	}
 
-	if m.Type() == models.MsgTypeOptIn {
+	if mo.Type() == models.MsgTypeOptIn {
 		// this is an optin request
-		optIn := oa.OptInByID(m.OptInID())
+		optIn := oa.OptInByID(mo.OptInID())
 		if optIn != nil {
 			msg.OptIn = &OptInRef{ID: optIn.ID(), Name: optIn.Name()}
 		}
-	} else if m.OptInID() != models.NilOptInID {
+	} else if mo.OptInID() != models.NilOptInID {
 		// an optin on a broadcast message means use it for authentication
-		msg.URNAuth = u.AuthTokens[fmt.Sprintf("optin:%d", m.OptInID())]
+		msg.URNAuth = mo.URN.AuthTokens[fmt.Sprintf("optin:%d", mo.OptInID())]
 	}
 
-	if m.Templating() != nil {
-		tpl := oa.TemplateByUUID(m.Templating().Template.UUID)
+	if mo.Templating() != nil {
+		tpl := oa.TemplateByUUID(mo.Templating().Template.UUID)
 		if tpl != nil {
-			tt := tpl.FindTranslation(ch, m.Locale())
+			tt := tpl.FindTranslation(ch, mo.Locale())
 			if tt != nil {
 				msg.Templating = &Templating{
-					MsgTemplating: m.Templating().MsgTemplating,
+					MsgTemplating: mo.Templating().MsgTemplating,
 					Namespace:     tt.Namespace(),
 					ExternalID:    tt.ExternalID(),
 					Language:      tt.ExternalLocale(), // i.e. en_US
@@ -155,21 +159,24 @@ func NewCourierMsg(oa *models.OrgAssets, m *models.Msg, u *models.ContactURN, ch
 		}
 	}
 
-	if m.Contact != nil && m.Contact.LastSeenOn() != nil {
-		msg.ContactLastSeenOn = m.Contact.LastSeenOn()
+	if mo.ReplyTo != nil {
+		msg.ResponseToExternalID = mo.ReplyTo.ExtID
 	}
+	if mo.Contact != nil && mo.Contact.LastSeenOn() != nil {
+		msg.ContactLastSeenOn = mo.Contact.LastSeenOn()
+	}
+	if mo.Session != nil {
+		msg.Session = &Session{
+			UUID:       mo.Session.UUID(),
+			Status:     sessionStatusMap[mo.Session.Status()],
+			SprintUUID: mo.SprintUUID,
+		}
 
-	if m.Session != nil {
-		msg.SessionID = m.Session.ID()
-		msg.SessionStatus = m.Session.Status()
-		msg.ResponseToExternalID = string(m.Session.IncomingMsgExternalID())
-
-		if m.LastInSprint && m.Session.Timeout() != nil && m.Session.WaitStartedOn() != nil {
-			// These fields are set on the last outgoing message in a session's sprint. In the case
+		if mo.LastInSprint && mo.WaitTimeout != 0 {
+			// This field is set on the last outgoing message in a session's sprint. In the case
 			// of the session being at a wait with a timeout then the timeout will be set. It is up to
 			// Courier to update the session's timeout appropriately after sending the message.
-			msg.SessionWaitStartedOn = m.Session.WaitStartedOn()
-			msg.SessionTimeout = int(*m.Session.Timeout() / time.Second)
+			msg.Session.Timeout = int(mo.WaitTimeout / time.Second)
 		}
 	}
 
@@ -206,16 +213,16 @@ end
 `)
 
 // PushCourierBatch pushes a batch of messages for a single contact and channel onto the appropriate courier queue
-func PushCourierBatch(rc redis.Conn, oa *models.OrgAssets, ch *models.Channel, sends []Send, timestamp string) error {
+func PushCourierBatch(rc redis.Conn, oa *models.OrgAssets, ch *models.Channel, msgs []*models.MsgOut, timestamp string) error {
 	priority := bulkPriority
-	if sends[0].Msg.HighPriority() {
+	if msgs[0].HighPriority() {
 		priority = highPriority
 	}
 
-	batch := make([]*Msg, len(sends))
-	for i, s := range sends {
+	batch := make([]*Msg, len(msgs))
+	for i, s := range msgs {
 		var err error
-		batch[i], err = NewCourierMsg(oa, s.Msg, s.URN, ch)
+		batch[i], err = NewCourierMsg(oa, s, ch)
 		if err != nil {
 			return fmt.Errorf("error creating courier message: %w", err)
 		}
@@ -228,8 +235,8 @@ func PushCourierBatch(rc redis.Conn, oa *models.OrgAssets, ch *models.Channel, s
 }
 
 // QueueCourierMessages queues messages for a single contact to Courier
-func QueueCourierMessages(rc redis.Conn, oa *models.OrgAssets, contactID models.ContactID, channel *models.Channel, sends []Send) error {
-	if len(sends) == 0 {
+func QueueCourierMessages(rc redis.Conn, oa *models.OrgAssets, contactID models.ContactID, channel *models.Channel, msgs []*models.MsgOut) error {
+	if len(msgs) == 0 {
 		return nil
 	}
 
@@ -239,9 +246,9 @@ func QueueCourierMessages(rc redis.Conn, oa *models.OrgAssets, contactID models.
 	epochSeconds := strconv.FormatFloat(float64(now.UnixNano()/int64(time.Microsecond))/float64(1000000), 'f', 6, 64)
 
 	// we batch msgs by priority
-	batch := make([]Send, 0, len(sends))
+	batch := make([]*models.MsgOut, 0, len(msgs))
 
-	currentPriority := sends[0].Msg.HighPriority()
+	currentPriority := msgs[0].HighPriority()
 
 	// commits our batch to redis
 	commitBatch := func() error {
@@ -256,20 +263,20 @@ func QueueCourierMessages(rc redis.Conn, oa *models.OrgAssets, contactID models.
 		return nil
 	}
 
-	for _, s := range sends {
+	for _, m := range msgs {
 		// sanity check the state of the msg we're about to queue...
-		assert(s.URN != nil && s.Msg.ContactURNID() != nil, "can't queue a message to courier without a URN")
+		assert(m.URN != nil && m.ContactURNID() != models.NilURNID, "can't queue a message to courier without a URN")
 
 		// if this msg is the same priority, add to current batch, otherwise start new batch
-		if s.Msg.HighPriority() == currentPriority {
-			batch = append(batch, s)
+		if m.HighPriority() == currentPriority {
+			batch = append(batch, m)
 		} else {
 			if err := commitBatch(); err != nil {
 				return err
 			}
 
-			currentPriority = s.Msg.HighPriority()
-			batch = []Send{s}
+			currentPriority = m.HighPriority()
+			batch = []*models.MsgOut{m}
 		}
 	}
 
@@ -312,11 +319,11 @@ type fetchAttachmentResponse struct {
 		URL         string `json:"url"`
 		Size        int    `json:"size"`
 	} `json:"attachment"`
-	LogUUID clogs.LogUUID `json:"log_uuid"`
+	LogUUID clogs.UUID `json:"log_uuid"`
 }
 
 // FetchAttachment calls courier to fetch the given attachment
-func FetchAttachment(ctx context.Context, rt *runtime.Runtime, ch *models.Channel, attURL string, msgID models.MsgID) (utils.Attachment, clogs.LogUUID, error) {
+func FetchAttachment(ctx context.Context, rt *runtime.Runtime, ch *models.Channel, attURL string, msgID models.MsgID) (utils.Attachment, clogs.UUID, error) {
 	payload := jsonx.MustMarshal(&fetchAttachmentRequest{
 		ChannelType: ch.Type(),
 		ChannelUUID: ch.UUID(),

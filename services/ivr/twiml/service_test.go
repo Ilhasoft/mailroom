@@ -18,7 +18,7 @@ import (
 	"github.com/nyaruka/mailroom/core/ivr"
 	"github.com/nyaruka/mailroom/services/ivr/twiml"
 	"github.com/nyaruka/mailroom/testsuite"
-	"github.com/nyaruka/mailroom/testsuite/testdata"
+	"github.com/nyaruka/mailroom/testsuite/testdb"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -80,7 +80,7 @@ func TestResponseForSprint(t *testing.T) {
 			// ivr msg followed by wait for digits
 			events: []flows.Event{
 				events.NewIVRCreated(flows.NewIVRMsgOut(urn, channelRef, "enter a number", "", "")),
-				events.NewMsgWait(nil, nil, hints.NewFixedDigitsHint(1)),
+				events.NewMsgWait(nil, expiresOn, hints.NewFixedDigits(1)),
 			},
 			expected: `<Response><Gather numDigits="1" timeout="30" action="http://temba.io/resume?session=1&amp;wait_type=gather"><Say language="en-US">enter a number</Say></Gather><Redirect>http://temba.io/resume?session=1&amp;wait_type=gather&amp;timeout=true</Redirect></Response>`,
 		},
@@ -88,7 +88,7 @@ func TestResponseForSprint(t *testing.T) {
 			// ivr msg followed by wait for terminated digits
 			events: []flows.Event{
 				events.NewIVRCreated(flows.NewIVRMsgOut(urn, channelRef, "enter a number, then press #", "", "")),
-				events.NewMsgWait(nil, nil, hints.NewTerminatedDigitsHint("#")),
+				events.NewMsgWait(nil, expiresOn, hints.NewTerminatedDigits("#")),
 			},
 			expected: `<Response><Gather finishOnKey="#" timeout="30" action="http://temba.io/resume?session=1&amp;wait_type=gather"><Say language="en-US">enter a number, then press #</Say></Gather><Redirect>http://temba.io/resume?session=1&amp;wait_type=gather&amp;timeout=true</Redirect></Response>`,
 		},
@@ -96,14 +96,14 @@ func TestResponseForSprint(t *testing.T) {
 			// ivr msg followed by wait for recording
 			events: []flows.Event{
 				events.NewIVRCreated(flows.NewIVRMsgOut(urn, channelRef, "say something", "", "")),
-				events.NewMsgWait(nil, nil, hints.NewAudioHint()),
+				events.NewMsgWait(nil, expiresOn, hints.NewAudio()),
 			},
 			expected: `<Response><Say language="en-US">say something</Say><Record action="http://temba.io/resume?session=1&amp;wait_type=record" maxLength="600"></Record><Redirect>http://temba.io/resume?session=1&amp;wait_type=record&amp;empty=true</Redirect></Response>`,
 		},
 		{
 			// dial wait
 			events: []flows.Event{
-				events.NewDialWait(urns.URN(`tel:+1234567890`), 60, 7200, &expiresOn),
+				events.NewDialWait(urns.URN(`tel:+1234567890`), 60, 7200, expiresOn),
 			},
 			expected: `<Response><Dial action="http://temba.io/resume?session=1&amp;wait_type=dial" timeout="60" timeLimit="7200">+1234567890</Dial></Response>`,
 		},
@@ -142,8 +142,8 @@ func TestURNForRequest(t *testing.T) {
 func TestRedactValues(t *testing.T) {
 	_, rt := testsuite.Runtime()
 
-	oa := testdata.Org1.Load(rt)
-	ch := oa.ChannelByUUID(testdata.TwilioChannel.UUID)
+	oa := testdb.Org1.Load(rt)
+	ch := oa.ChannelByUUID(testdb.TwilioChannel.UUID)
 	svc, _ := ivr.GetService(ch)
 
 	assert.Equal(t, []string{"U0lEMTIzNDU2Nzg5OnNlc2FtZQ==", "sesame"}, svc.RedactValues(ch))

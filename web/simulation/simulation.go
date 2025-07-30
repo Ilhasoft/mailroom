@@ -21,8 +21,11 @@ import (
 	"github.com/nyaruka/mailroom/web"
 )
 
-var testChannel = assets.NewChannelReference("440099cf-200c-4d45-a8e7-4a564f4a0e8b", "Test Channel")
-var testURN = urns.URN("tel:+12065551212")
+const (
+	testURN         = urns.URN("tel:+12065551212")
+	testChannelUUID = assets.ChannelUUID("440099cf-200c-4d45-a8e7-4a564f4a0e8b")
+	testCallUUID    = flows.CallUUID("01979e0b-3072-7345-ae19-879750caaaf6")
+)
 
 func init() {
 	web.RegisterRoute(http.MethodPost, "/mr/sim/start", web.RequireAuthToken(web.JSONPayload(handleStart)))
@@ -40,6 +43,8 @@ type sessionRequest struct {
 	Assets struct {
 		Channels []*static.Channel `json:"channels"`
 	} `json:"assets"`
+	Contact *flows.ContactEnvelope `json:"contact" validate:"required"`
+	Call    *flows.CallEnvelope    `json:"call,omitempty"`
 }
 
 func (r *sessionRequest) flows() map[assets.FlowUUID]json.RawMessage {
@@ -59,10 +64,11 @@ func (r *sessionRequest) channels() []assets.Channel {
 }
 
 type simulationResponse struct {
-	Session  flows.Session   `json:"session"`
-	Events   []flows.Event   `json:"events"`
-	Segments []flows.Segment `json:"segments"`
-	Context  *types.XObject  `json:"context,omitempty"`
+	Session  flows.Session          `json:"session"`
+	Contact  *flows.ContactEnvelope `json:"contact"`
+	Events   []flows.Event          `json:"events"`
+	Segments []flows.Segment        `json:"segments"`
+	Context  *types.XObject         `json:"context,omitempty"`
 }
 
 func newSimulationResponse(session flows.Session, sprint flows.Sprint) *simulationResponse {
@@ -77,7 +83,13 @@ func newSimulationResponse(session flows.Session, sprint flows.Sprint) *simulati
 			})
 		}
 	}
-	return &simulationResponse{Session: session, Events: sprint.Events(), Segments: sprint.Segments(), Context: context}
+	return &simulationResponse{
+		Session:  session,
+		Contact:  session.Contact().Marshal(),
+		Events:   sprint.Events(),
+		Segments: sprint.Segments(),
+		Context:  context,
+	}
 }
 
 // Starts a new engine session
@@ -88,6 +100,7 @@ func newSimulationResponse(session flows.Session, sprint flows.Sprint) *simulati
 //	     "uuid": uuidv4,
 //	     "definition": {...},
 //	  },.. ],
+//	  "contact": {"uuid": "468621a8-32e6-4cd2-afc1-04416f7151f0", "name": "Bob", ...},
 //	  "trigger": {...},
 //	  "assets": {...}
 //	}
@@ -103,7 +116,7 @@ func handleSimulationEvents(ctx context.Context, db models.DBorTx, oa *models.Or
 	wes := make([]*models.WebhookEvent, 0)
 	for _, e := range es {
 		if e.Type() == events.TypeResthookCalled {
-			rec := e.(*events.ResthookCalledEvent)
+			rec := e.(*events.ResthookCalled)
 			resthook := oa.ResthookBySlug(rec.Resthook)
 			if resthook != nil {
 				we := models.NewWebhookEvent(oa.OrgID(), resthook.ID(), string(rec.Payload), rec.CreatedOn())
@@ -129,19 +142,28 @@ func handleStart(ctx context.Context, rt *runtime.Runtime, r *startRequest) (any
 		return nil, http.StatusBadRequest, fmt.Errorf("unable to clone org: %w", err)
 	}
 
-	// read our trigger
-	trigger, err := triggers.ReadTrigger(oa.SessionAssets(), r.Trigger, assets.IgnoreMissing)
+	contact, err := r.Contact.Unmarshal(oa.SessionAssets(), assets.IgnoreMissing)
+	if err != nil {
+		return nil, http.StatusBadRequest, fmt.Errorf("unable to read contact: %w", err)
+	}
+
+	var call *flows.Call
+	if r.Call != nil {
+		call = r.Call.Unmarshal(oa.SessionAssets(), assets.IgnoreMissing)
+	}
+
+	trigger, err := triggers.Read(oa.SessionAssets(), r.Trigger, assets.IgnoreMissing)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("unable to read trigger: %w", err)
 	}
 
-	return triggerFlow(ctx, rt, oa, trigger)
+	return triggerFlow(ctx, rt, oa, contact, call, trigger)
 }
 
 // triggerFlow creates a new session with the passed in trigger, returning our standard response
-func triggerFlow(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, trigger flows.Trigger) (any, int, error) {
+func triggerFlow(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, contact *flows.Contact, call *flows.Call, trigger flows.Trigger) (any, int, error) {
 	// start our flow session
-	session, sprint, err := goflow.Simulator(ctx, rt).NewSession(oa.SessionAssets(), trigger)
+	session, sprint, err := goflow.Simulator(ctx, rt).NewSession(ctx, oa.SessionAssets(), oa.Env(), contact, trigger, call)
 	if err != nil {
 		return nil, 0, fmt.Errorf("error starting session: %w", err)
 	}
@@ -162,7 +184,8 @@ func triggerFlow(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets,
 //	     "uuid": uuidv4,
 //	     "definition": {...},
 //	  },.. ],
-//	  "session": {"uuid": "468621a8-32e6-4cd2-afc1-04416f7151f0", "runs": [...], ...},
+//	  "contact": {"uuid": "468621a8-32e6-4cd2-afc1-04416f7151f0", "name": "Bob", ...},
+//	  "session": {"uuid": "01979d37-9fe7-7e16-8cc0-bae91a66cfe1", "runs": [...], ...},
 //	  "resume": {...},
 //	  "assets": {...}
 //	}
@@ -185,21 +208,32 @@ func handleResume(ctx context.Context, rt *runtime.Runtime, r *resumeRequest) (a
 		return nil, http.StatusBadRequest, err
 	}
 
-	session, err := goflow.Simulator(ctx, rt).ReadSession(oa.SessionAssets(), r.Session, assets.IgnoreMissing)
+	contact, err := r.Contact.Unmarshal(oa.SessionAssets(), assets.IgnoreMissing)
+	if err != nil {
+		return nil, http.StatusBadRequest, fmt.Errorf("unable to read contact: %w", err)
+	}
+
+	var call *flows.Call
+	if r.Call != nil {
+		call = r.Call.Unmarshal(oa.SessionAssets(), assets.IgnoreMissing)
+	}
+
+	resume, err := resumes.Read(oa.SessionAssets(), r.Resume, assets.IgnoreMissing)
 	if err != nil {
 		return nil, http.StatusBadRequest, err
 	}
 
-	// read our resume
-	resume, err := resumes.ReadResume(oa.SessionAssets(), r.Resume, assets.IgnoreMissing)
+	session, err := goflow.Simulator(ctx, rt).ReadSession(oa.SessionAssets(), r.Session, oa.Env(), contact, call, assets.IgnoreMissing)
 	if err != nil {
 		return nil, http.StatusBadRequest, err
 	}
 
 	// if this is a msg resume we want to check whether it might be caught by a trigger
 	if resume.Type() == resumes.TypeMsg {
-		msgResume := resume.(*resumes.MsgResume)
-		trigger, keyword := models.FindMatchingMsgTrigger(oa, nil, msgResume.Contact(), msgResume.Msg().Text())
+		msgResume := resume.(*resumes.Msg)
+		msgEvt := msgResume.Event().(*events.MsgReceived)
+
+		trigger, keyword := models.FindMatchingMsgTrigger(oa, nil, contact, msgEvt.Msg.Text())
 		if trigger != nil {
 			var flow *models.Flow
 			for _, r := range session.Runs() {
@@ -220,22 +254,22 @@ func handleResume(ctx context.Context, rt *runtime.Runtime, r *resumeRequest) (a
 				}
 
 				if triggeredFlow != nil {
-					tb := triggers.NewBuilder(oa.Env(), triggeredFlow.Reference(), resume.Contact())
+					tb := triggers.NewBuilder(triggeredFlow.Reference())
 
 					var sessionTrigger flows.Trigger
+					var call *flows.Call
 					if triggeredFlow.FlowType() == models.FlowTypeVoice {
-						// TODO this should trigger a msg trigger with a call but first we need to rework
-						// non-simulation IVR triggers to use that so that this is consistent.
-						sessionTrigger = tb.Manual().WithCall(testChannel, testURN).Build()
+						sessionTrigger = tb.Msg(msgEvt).Build()
+						call = flows.NewCall(testCallUUID, oa.SessionAssets().Channels().Get(testChannelUUID), testURN)
 					} else {
-						mtb := tb.Msg(msgResume.Msg())
+						mtb := tb.Msg(msgEvt)
 						if keyword != "" {
 							mtb = mtb.WithMatch(&triggers.KeywordMatch{Type: trigger.KeywordMatchType(), Keyword: keyword})
 						}
 						sessionTrigger = mtb.Build()
 					}
 
-					return triggerFlow(ctx, rt, oa, sessionTrigger)
+					return triggerFlow(ctx, rt, oa, contact, call, sessionTrigger)
 				}
 			}
 		}
@@ -247,7 +281,7 @@ func handleResume(ctx context.Context, rt *runtime.Runtime, r *resumeRequest) (a
 	}
 
 	// resume our session
-	sprint, err := session.Resume(resume)
+	sprint, err := session.Resume(ctx, resume)
 	if err != nil {
 		return nil, 0, err
 	}

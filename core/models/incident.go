@@ -15,7 +15,7 @@ import (
 	"github.com/nyaruka/goflow/flows/events"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/null/v3"
-	"github.com/nyaruka/redisx"
+	"github.com/nyaruka/vkutil"
 )
 
 // IncidentID is our type for incident ids
@@ -146,7 +146,7 @@ type WebhookNode struct {
 	UUID flows.NodeUUID
 }
 
-func (n *WebhookNode) Record(rt *runtime.Runtime, events []*events.WebhookCalledEvent) error {
+func (n *WebhookNode) Record(ctx context.Context, rt *runtime.Runtime, events []*events.WebhookCalled) error {
 	numHealthy, numUnhealthy := 0, 0
 	for _, e := range events {
 		if e.ElapsedMS <= rt.Config.WebhooksHealthyResponseLimit {
@@ -156,18 +156,18 @@ func (n *WebhookNode) Record(rt *runtime.Runtime, events []*events.WebhookCalled
 		}
 	}
 
-	rc := rt.RP.Get()
+	rc := rt.VK.Get()
 	defer rc.Close()
 
 	healthySeries, unhealthySeries := n.series()
 
 	if numHealthy > 0 {
-		if err := healthySeries.Record(rc, string(n.UUID), int64(numHealthy)); err != nil {
+		if err := healthySeries.Record(ctx, rc, string(n.UUID), int64(numHealthy)); err != nil {
 			return fmt.Errorf("error recording healthy calls: %w", err)
 		}
 	}
 	if numUnhealthy > 0 {
-		if err := unhealthySeries.Record(rc, string(n.UUID), int64(numUnhealthy)); err != nil {
+		if err := unhealthySeries.Record(ctx, rc, string(n.UUID), int64(numUnhealthy)); err != nil {
 			return fmt.Errorf("error recording unhealthy calls: %w", err)
 		}
 	}
@@ -175,16 +175,16 @@ func (n *WebhookNode) Record(rt *runtime.Runtime, events []*events.WebhookCalled
 	return nil
 }
 
-func (n *WebhookNode) Healthy(rt *runtime.Runtime) (bool, error) {
-	rc := rt.RP.Get()
+func (n *WebhookNode) Healthy(ctx context.Context, rt *runtime.Runtime) (bool, error) {
+	rc := rt.VK.Get()
 	defer rc.Close()
 
 	healthySeries, unhealthySeries := n.series()
-	healthy, err := healthySeries.Total(rc, string(n.UUID))
+	healthy, err := healthySeries.Total(ctx, rc, string(n.UUID))
 	if err != nil {
 		return false, fmt.Errorf("error getting healthy series total: %w", err)
 	}
-	unhealthy, err := unhealthySeries.Total(rc, string(n.UUID))
+	unhealthy, err := unhealthySeries.Total(ctx, rc, string(n.UUID))
 	if err != nil {
 		return false, fmt.Errorf("error getting healthy series total: %w", err)
 	}
@@ -193,6 +193,6 @@ func (n *WebhookNode) Healthy(rt *runtime.Runtime) (bool, error) {
 	return unhealthy < 10 || (100*unhealthy/(healthy+unhealthy)) < 25, nil
 }
 
-func (n *WebhookNode) series() (*redisx.IntervalSeries, *redisx.IntervalSeries) {
-	return redisx.NewIntervalSeries("webhooks:healthy", time.Minute*5, 4), redisx.NewIntervalSeries("webhooks:unhealthy", time.Minute*5, 4)
+func (n *WebhookNode) series() (*vkutil.IntervalSeries, *vkutil.IntervalSeries) {
+	return vkutil.NewIntervalSeries("webhooks:healthy", time.Minute*5, 4), vkutil.NewIntervalSeries("webhooks:unhealthy", time.Minute*5, 4)
 }

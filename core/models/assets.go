@@ -36,13 +36,14 @@ const (
 	RefreshGlobals     = Refresh(1 << 7)
 	RefreshGroups      = Refresh(1 << 8)
 	RefreshLabels      = Refresh(1 << 9)
-	RefreshLocations   = Refresh(1 << 10)
-	RefreshOptIns      = Refresh(1 << 11)
-	RefreshResthooks   = Refresh(1 << 12)
-	RefreshTemplates   = Refresh(1 << 13)
-	RefreshTopics      = Refresh(1 << 14)
-	RefreshTriggers    = Refresh(1 << 15)
-	RefreshUsers       = Refresh(1 << 16)
+	RefreshLLMs        = Refresh(1 << 10)
+	RefreshLocations   = Refresh(1 << 11)
+	RefreshOptIns      = Refresh(1 << 12)
+	RefreshResthooks   = Refresh(1 << 13)
+	RefreshTemplates   = Refresh(1 << 14)
+	RefreshTopics      = Refresh(1 << 15)
+	RefreshTriggers    = Refresh(1 << 16)
+	RefreshUsers       = Refresh(1 << 17)
 )
 
 // OrgAssets is our top level cache of all things contained in an org. It is used to build
@@ -61,17 +62,17 @@ type OrgAssets struct {
 	flowByID      map[FlowID]assets.Flow
 	flowCacheLock sync.RWMutex
 
+	campaigns             []assets.Campaign
+	campaignPointsByField map[FieldID][]*CampaignPoint
+	campaignPointsByID    map[PointID]*CampaignPoint
+	campaignsByGroup      map[GroupID][]*Campaign
+
 	channels       []assets.Channel
 	channelsByID   map[ChannelID]*Channel
 	channelsByUUID map[assets.ChannelUUID]*Channel
 
 	classifiers       []assets.Classifier
 	classifiersByUUID map[assets.ClassifierUUID]*Classifier
-
-	campaigns             []*Campaign
-	campaignEventsByField map[FieldID][]*CampaignEvent
-	campaignEventsByID    map[CampaignEventID]*CampaignEvent
-	campaignsByGroup      map[GroupID][]*Campaign
 
 	fields       []assets.Field // excludes proxy fields
 	fieldsByUUID map[assets.FieldUUID]*Field
@@ -83,6 +84,9 @@ type OrgAssets struct {
 
 	labels       []assets.Label
 	labelsByUUID map[assets.LabelUUID]*Label
+
+	llms     []assets.LLM
+	llmsByID map[LLMID]*LLM
 
 	optIns       []assets.OptIn
 	optInsByID   map[OptInID]*OptIn
@@ -103,9 +107,9 @@ type OrgAssets struct {
 	locations        []assets.LocationHierarchy
 	locationsBuiltAt time.Time
 
-	users        []assets.User
-	usersByID    map[UserID]*User
-	usersByEmail map[string]*User
+	users       []assets.User
+	usersByID   map[UserID]*User
+	usersByUUID map[assets.UserUUID]*User
 }
 
 var ErrNotFound = errors.New("not found")
@@ -173,6 +177,29 @@ func NewOrgAssets(ctx context.Context, rt *runtime.Runtime, orgID OrgID, prev *O
 		}
 	} else {
 		oa.org = prev.org
+	}
+
+	if prev == nil || refresh&RefreshCampaigns > 0 {
+		oa.campaigns, err = loadAssetType(ctx, db, orgID, "campaigns", loadCampaigns)
+		if err != nil {
+			return nil, fmt.Errorf("error loading campaigns for org %d: %w", orgID, err)
+		}
+		oa.campaignPointsByField = make(map[FieldID][]*CampaignPoint)
+		oa.campaignPointsByID = make(map[PointID]*CampaignPoint)
+		oa.campaignsByGroup = make(map[GroupID][]*Campaign)
+		for _, c := range oa.campaigns {
+			camp := c.(*Campaign)
+			oa.campaignsByGroup[camp.GroupID()] = append(oa.campaignsByGroup[camp.GroupID()], camp)
+			for _, e := range camp.Points() {
+				oa.campaignPointsByField[e.RelativeToID] = append(oa.campaignPointsByField[e.RelativeToID], e)
+				oa.campaignPointsByID[e.ID] = e
+			}
+		}
+	} else {
+		oa.campaigns = prev.campaigns
+		oa.campaignPointsByField = prev.campaignPointsByField
+		oa.campaignPointsByID = prev.campaignPointsByID
+		oa.campaignsByGroup = prev.campaignsByGroup
 	}
 
 	if prev == nil || refresh&RefreshChannels > 0 {
@@ -256,7 +283,7 @@ func NewOrgAssets(ctx context.Context, rt *runtime.Runtime, orgID OrgID, prev *O
 	if prev == nil || refresh&RefreshLabels > 0 {
 		oa.labels, err = loadAssetType(ctx, db, orgID, "labels", loadLabels)
 		if err != nil {
-			return nil, fmt.Errorf("error loading group labels for org %d: %w", orgID, err)
+			return nil, fmt.Errorf("error loading labels for org %d: %w", orgID, err)
 		}
 		oa.labelsByUUID = make(map[assets.LabelUUID]*Label)
 		for _, l := range oa.labels {
@@ -265,6 +292,20 @@ func NewOrgAssets(ctx context.Context, rt *runtime.Runtime, orgID OrgID, prev *O
 	} else {
 		oa.labels = prev.labels
 		oa.labelsByUUID = prev.labelsByUUID
+	}
+
+	if prev == nil || refresh&RefreshLLMs > 0 {
+		oa.llms, err = loadAssetType(ctx, db, orgID, "llms", loadLLMs)
+		if err != nil {
+			return nil, fmt.Errorf("error loading LLMs for org %d: %w", orgID, err)
+		}
+		oa.llmsByID = make(map[LLMID]*LLM)
+		for _, l := range oa.llms {
+			oa.llmsByID[l.(*LLM).ID()] = l.(*LLM)
+		}
+	} else {
+		oa.llms = prev.llms
+		oa.llmsByID = prev.llmsByID
 	}
 
 	if prev == nil || refresh&RefreshOptIns > 0 {
@@ -291,28 +332,6 @@ func NewOrgAssets(ctx context.Context, rt *runtime.Runtime, orgID OrgID, prev *O
 		}
 	} else {
 		oa.resthooks = prev.resthooks
-	}
-
-	if prev == nil || refresh&RefreshCampaigns > 0 {
-		oa.campaigns, err = loadAssetType(ctx, db, orgID, "campaigns", loadCampaigns)
-		if err != nil {
-			return nil, fmt.Errorf("error loading campaigns for org %d: %w", orgID, err)
-		}
-		oa.campaignEventsByField = make(map[FieldID][]*CampaignEvent)
-		oa.campaignEventsByID = make(map[CampaignEventID]*CampaignEvent)
-		oa.campaignsByGroup = make(map[GroupID][]*Campaign)
-		for _, c := range oa.campaigns {
-			oa.campaignsByGroup[c.GroupID()] = append(oa.campaignsByGroup[c.GroupID()], c)
-			for _, e := range c.Events() {
-				oa.campaignEventsByField[e.RelativeToID()] = append(oa.campaignEventsByField[e.RelativeToID()], e)
-				oa.campaignEventsByID[e.ID()] = e
-			}
-		}
-	} else {
-		oa.campaigns = prev.campaigns
-		oa.campaignEventsByField = prev.campaignEventsByField
-		oa.campaignEventsByID = prev.campaignEventsByID
-		oa.campaignsByGroup = prev.campaignsByGroup
 	}
 
 	if prev == nil || refresh&RefreshTriggers > 0 {
@@ -392,15 +411,15 @@ func NewOrgAssets(ctx context.Context, rt *runtime.Runtime, orgID OrgID, prev *O
 			return nil, fmt.Errorf("error loading user assets for org %d: %w", orgID, err)
 		}
 		oa.usersByID = make(map[UserID]*User)
-		oa.usersByEmail = make(map[string]*User)
+		oa.usersByUUID = make(map[assets.UserUUID]*User)
 		for _, u := range oa.users {
 			oa.usersByID[u.(*User).ID()] = u.(*User)
-			oa.usersByEmail[u.Email()] = u.(*User)
+			oa.usersByUUID[u.UUID()] = u.(*User)
 		}
 	} else {
 		oa.users = prev.users
 		oa.usersByID = prev.usersByID
-		oa.usersByEmail = prev.usersByEmail
+		oa.usersByUUID = prev.usersByUUID
 	}
 
 	// intialize our session assets
@@ -463,6 +482,22 @@ func (a *OrgAssets) Env() envs.Environment { return a.org.env }
 func (a *OrgAssets) Org() *Org { return a.org }
 
 func (a *OrgAssets) SessionAssets() flows.SessionAssets { return a.sessionAssets }
+
+func (a *OrgAssets) Campaigns() ([]assets.Campaign, error) {
+	return a.campaigns, nil
+}
+
+func (a *OrgAssets) CampaignByGroupID(groupID GroupID) []*Campaign {
+	return a.campaignsByGroup[groupID]
+}
+
+func (a *OrgAssets) CampaignPointsByFieldID(fieldID FieldID) []*CampaignPoint {
+	return a.campaignPointsByField[fieldID]
+}
+
+func (a *OrgAssets) CampaignPointByID(id PointID) *CampaignPoint {
+	return a.campaignPointsByID[id]
+}
 
 func (a *OrgAssets) Channels() ([]assets.Channel, error) {
 	return a.channels, nil
@@ -604,22 +639,6 @@ func (a *OrgAssets) loadFlow(fromCache func() assets.Flow, fromDB func(context.C
 	return dbFlow, nil
 }
 
-func (a *OrgAssets) Campaigns() []*Campaign {
-	return a.campaigns
-}
-
-func (a *OrgAssets) CampaignByGroupID(groupID GroupID) []*Campaign {
-	return a.campaignsByGroup[groupID]
-}
-
-func (a *OrgAssets) CampaignEventsByFieldID(fieldID FieldID) []*CampaignEvent {
-	return a.campaignEventsByField[fieldID]
-}
-
-func (a *OrgAssets) CampaignEventByID(eventID CampaignEventID) *CampaignEvent {
-	return a.campaignEventsByID[eventID]
-}
-
 func (a *OrgAssets) Groups() ([]assets.Group, error) {
 	return a.groups, nil
 }
@@ -638,6 +657,14 @@ func (a *OrgAssets) Labels() ([]assets.Label, error) {
 
 func (a *OrgAssets) LabelByUUID(uuid assets.LabelUUID) *Label {
 	return a.labelsByUUID[uuid]
+}
+
+func (a *OrgAssets) LLMs() ([]assets.LLM, error) {
+	return a.llms, nil
+}
+
+func (a *OrgAssets) LLMByID(id LLMID) *LLM {
+	return a.llmsByID[id]
 }
 
 func (a *OrgAssets) Triggers() []*Trigger {
@@ -709,8 +736,8 @@ func (a *OrgAssets) UserByID(id UserID) *User {
 	return a.usersByID[id]
 }
 
-func (a *OrgAssets) UserByEmail(email string) *User {
-	return a.usersByEmail[email]
+func (a *OrgAssets) UserByUUID(uuid assets.UserUUID) *User {
+	return a.usersByUUID[uuid]
 }
 
 func loadAssetType[A any](ctx context.Context, db *sql.DB, orgID OrgID, name string, f func(ctx context.Context, db *sql.DB, orgID OrgID) ([]A, error)) ([]A, error) {

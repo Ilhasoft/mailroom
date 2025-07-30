@@ -10,7 +10,7 @@ import (
 
 	"github.com/getsentry/sentry-go"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/nyaruka/redisx"
+	"github.com/nyaruka/vkutil"
 )
 
 // Function is the function that will be called on our schedule
@@ -21,6 +21,8 @@ type Function func(context.Context, *runtime.Runtime) error
 // crons may be called more often than duration as there is no inter-process
 // coordination of cron fires. (this might be a worthy addition)
 func Start(rt *runtime.Runtime, wg *sync.WaitGroup, name string, allInstances bool, cronFunc Function, next func(time.Time) time.Time, timeout time.Duration, quit chan bool) {
+	ctx := context.TODO()
+
 	wg.Add(1) // add ourselves to the wait group
 
 	lockName := fmt.Sprintf("lock:%s_lock", name) // for historical reasons...
@@ -30,7 +32,7 @@ func Start(rt *runtime.Runtime, wg *sync.WaitGroup, name string, allInstances bo
 		lockName = fmt.Sprintf("%s:%s", lockName, rt.Config.InstanceID)
 	}
 
-	locker := redisx.NewLocker(lockName, timeout+time.Second*30)
+	locker := vkutil.NewLocker(lockName, timeout+time.Second*30)
 
 	wait := time.Duration(0)
 	lastFire := time.Now()
@@ -50,7 +52,7 @@ func Start(rt *runtime.Runtime, wg *sync.WaitGroup, name string, allInstances bo
 				lastFire = time.Now()
 
 				// try to get lock but don't retry - if lock is taken then task is still running or running on another instance
-				lock, err := locker.Grab(rt.RP, 0)
+				lock, err := locker.Grab(ctx, rt.VK, 0)
 				if err != nil {
 					break
 				}
@@ -66,7 +68,7 @@ func Start(rt *runtime.Runtime, wg *sync.WaitGroup, name string, allInstances bo
 				}
 
 				// release our lock
-				err = locker.Release(rt.RP, lock)
+				err = locker.Release(ctx, rt.VK, lock)
 				if err != nil {
 					log.Error("error releasing lock", "error", err)
 				}
@@ -74,10 +76,7 @@ func Start(rt *runtime.Runtime, wg *sync.WaitGroup, name string, allInstances bo
 
 			// calculate our next fire time
 			nextFire := next(lastFire)
-			wait = time.Until(nextFire)
-			if wait < time.Duration(0) {
-				wait = time.Duration(0)
-			}
+			wait = max(time.Until(nextFire), time.Duration(0))
 		}
 	}()
 }

@@ -62,10 +62,10 @@ func handleEvent(ctx context.Context, rt *runtime.Runtime, r *eventRequest) (any
 	}
 
 	if needsHandling {
-		rc := rt.RP.Get()
+		rc := rt.VK.Get()
 		defer rc.Close()
 
-		err = handler.QueueTask(rc, r.OrgID, e.ContactID, &ctasks.ChannelEventTask{
+		err = handler.QueueTask(rc, r.OrgID, e.ContactID, &ctasks.EventReceivedTask{
 			EventID:    e.ID,
 			EventType:  e.EventType,
 			ChannelID:  e.ChannelID,

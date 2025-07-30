@@ -13,12 +13,12 @@ import (
 	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/jmoiron/sqlx"
 	"github.com/nyaruka/gocommon/aws/cwatch"
-	"github.com/nyaruka/gocommon/aws/dynamo"
 	"github.com/nyaruka/gocommon/aws/s3x"
+	"github.com/nyaruka/mailroom/core/crons"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/runtime"
 	"github.com/nyaruka/mailroom/web"
-	"github.com/nyaruka/redisx"
+	"github.com/nyaruka/vkutil"
 )
 
 // Mailroom is a service for handling RapidPro events
@@ -36,10 +36,10 @@ type Mailroom struct {
 
 	webserver *web.Server
 
-	// both sqlx and redis provide wait stats which are cummulative that we need to convert into increments by
+	// both sqlx and valkey provide wait stats which are cummulative that we need to convert into increments by
 	// tracking their previous values
-	dbWaitDuration    time.Duration
-	redisWaitDuration time.Duration
+	dbWaitDuration time.Duration
+	vkWaitDuration time.Duration
 }
 
 // NewMailroom creates and returns a new mailroom instance
@@ -85,11 +85,11 @@ func (mr *Mailroom) Start() error {
 		log.Warn("no distinct readonly db configured")
 	}
 
-	mr.rt.RP, err = redisx.NewPool(c.Redis)
+	mr.rt.VK, err = vkutil.NewPool(c.Valkey)
 	if err != nil {
-		log.Error("redis not reachable", "error", err)
+		log.Error("valkey not reachable", "error", err)
 	} else {
-		log.Info("redis ok")
+		log.Info("valkey ok")
 	}
 
 	if c.AndroidCredentialsFile != "" {
@@ -102,11 +102,11 @@ func (mr *Mailroom) Start() error {
 	}
 
 	// setup DynamoDB
-	mr.rt.Dynamo, err = dynamo.NewService(c.AWSAccessKeyID, c.AWSSecretAccessKey, c.DynamoRegion, c.DynamoEndpoint, c.DynamoTablePrefix)
+	mr.rt.Dynamo, err = runtime.NewDynamoTables(c)
 	if err != nil {
 		return err
 	}
-	if err := mr.rt.Dynamo.Test(mr.ctx); err != nil {
+	if err := mr.rt.Dynamo.Main.Test(mr.ctx); err != nil {
 		log.Error("dynamodb not reachable", "error", err)
 	} else {
 		log.Info("dynamodb ok")
@@ -155,7 +155,7 @@ func (mr *Mailroom) Start() error {
 	mr.webserver = web.NewServer(mr.ctx, mr.rt, mr.wg)
 	mr.webserver.Start()
 
-	tasks.StartCrons(mr.rt, mr.wg, mr.quit)
+	crons.StartAll(mr.rt, mr.wg, mr.quit)
 
 	mr.startMetricsReporter(time.Minute)
 
@@ -201,20 +201,20 @@ func (mr *Mailroom) reportMetrics(ctx context.Context) (int, error) {
 
 	handlerSize, batchSize, throttledSize := getQueueSizes(mr.rt)
 
-	// calculate DB and redis stats
+	// calculate DB and valkey stats
 	dbStats := mr.rt.DB.Stats()
-	redisStats := mr.rt.RP.Stats()
+	vkStats := mr.rt.VK.Stats()
 	dbWaitDurationInPeriod := dbStats.WaitDuration - mr.dbWaitDuration
-	redisWaitDurationInPeriod := redisStats.WaitDuration - mr.redisWaitDuration
+	vkWaitDurationInPeriod := vkStats.WaitDuration - mr.vkWaitDuration
 	mr.dbWaitDuration = dbStats.WaitDuration
-	mr.redisWaitDuration = redisStats.WaitDuration
+	mr.vkWaitDuration = vkStats.WaitDuration
 
 	hostDim := cwatch.Dimension("Host", mr.rt.Config.InstanceID)
 	metrics = append(metrics,
 		cwatch.Datum("DBConnectionsInUse", float64(dbStats.InUse), types.StandardUnitCount, hostDim),
 		cwatch.Datum("DBConnectionWaitDuration", float64(dbWaitDurationInPeriod)/float64(time.Second), types.StandardUnitSeconds, hostDim),
-		cwatch.Datum("RedisConnectionsInUse", float64(redisStats.ActiveCount), types.StandardUnitCount, hostDim),
-		cwatch.Datum("RedisConnectionsWaitDuration", float64(redisWaitDurationInPeriod)/float64(time.Second), types.StandardUnitSeconds, hostDim),
+		cwatch.Datum("ValkeyConnectionsInUse", float64(vkStats.ActiveCount), types.StandardUnitCount, hostDim),
+		cwatch.Datum("ValkeyConnectionsWaitDuration", float64(vkWaitDurationInPeriod)/float64(time.Second), types.StandardUnitSeconds, hostDim),
 		cwatch.Datum("QueuedTasks", float64(handlerSize), types.StandardUnitCount, cwatch.Dimension("QueueName", "handler")),
 		cwatch.Datum("QueuedTasks", float64(batchSize), types.StandardUnitCount, cwatch.Dimension("QueueName", "batch")),
 		cwatch.Datum("QueuedTasks", float64(throttledSize), types.StandardUnitCount, cwatch.Dimension("QueueName", "throttled")),
@@ -247,6 +247,10 @@ func (mr *Mailroom) Stop() error {
 	return nil
 }
 
+func (mr *Mailroom) Runtime() *runtime.Runtime {
+	return mr.rt
+}
+
 func openAndCheckDBConnection(url string, maxOpenConns int) (*sql.DB, *sqlx.DB, error) {
 	db, err := sqlx.Open("postgres", url)
 	if err != nil {
@@ -267,7 +271,7 @@ func openAndCheckDBConnection(url string, maxOpenConns int) (*sql.DB, *sqlx.DB, 
 }
 
 func getQueueSizes(rt *runtime.Runtime) (int, int, int) {
-	rc := rt.RP.Get()
+	rc := rt.VK.Get()
 	defer rc.Close()
 
 	handler, err := tasks.HandlerQueue.Size(rc)

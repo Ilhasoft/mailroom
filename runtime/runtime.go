@@ -9,7 +9,6 @@ import (
 	"github.com/gomodule/redigo/redis"
 	"github.com/jmoiron/sqlx"
 	"github.com/nyaruka/gocommon/aws/cwatch"
-	"github.com/nyaruka/gocommon/aws/dynamo"
 	"github.com/nyaruka/gocommon/aws/s3x"
 )
 
@@ -18,8 +17,8 @@ import (
 type Runtime struct {
 	DB         *sqlx.DB
 	ReadonlyDB *sql.DB
-	RP         *redis.Pool
-	Dynamo     *dynamo.Service
+	VK         *redis.Pool
+	Dynamo     *DynamoTables
 	S3         *s3x.Service
 	ES         *elasticsearch.TypedClient
 	Stats      *StatsCollector

@@ -13,7 +13,7 @@ import (
 	"github.com/nyaruka/gocommon/jsonx"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/testsuite"
-	"github.com/nyaruka/mailroom/testsuite/testdata"
+	"github.com/nyaruka/mailroom/testsuite/testdb"
 	"github.com/nyaruka/mailroom/web"
 
 	"github.com/stretchr/testify/assert"
@@ -23,29 +23,20 @@ const (
 	startBody = `
 	{
 		"org_id": 1,
+		"contact": {
+			"uuid": "ba96bf7f-bc2a-4873-a7c7-254d1927c4e3",
+			"id": 1234567,
+			"name": "Ben Haggerty",
+			"status": "active",
+			"language": "eng",
+			"timezone": "America/Guayaquil",
+			"urns": [
+				"tel:+12065551212"
+			],
+			"fields": {},
+			"created_on": "2000-01-01T00:00:00.000000000-00:00"
+		},
 		"trigger": {
-			"contact": {
-				"created_on": "2000-01-01T00:00:00.000000000-00:00",
-				"fields": {},
-				"id": 1234567,
-				"language": "eng",
-				"name": "Ben Haggerty",
-				"timezone": "America/Guayaquil",
-				"urns": [
-					"tel:+12065551212"
-				],
-				"uuid": "ba96bf7f-bc2a-4873-a7c7-254d1927c4e3"
-			},
-			"environment": {
-				"allowed_languages": [
-					"eng",
-					"fra"
-				],
-				"date_format": "YYYY-MM-DD",
-				"default_language": "eng",
-				"time_format": "hh:mm",
-				"timezone": "America/Los_Angeles"
-			},
 			"flow": {
 				"name": "Favorites",
 				"uuid": "9de3663f-c5c5-4c92-9f45-ecbc09abcc85"
@@ -58,38 +49,33 @@ const (
 	resumeBody = `
 	{
 		"org_id": 1,
+		"contact": {
+			"uuid": "ba96bf7f-bc2a-4873-a7c7-254d1927c4e3",
+			"id": 1234567,
+			"name": "Ben Haggerty",
+			"status": "active",
+			"language": "eng",
+			"timezone": "America/Guayaquil",
+			"urns": [
+				"tel:+12065551212"
+			],
+			"fields": {},
+			"created_on": "2000-01-01T00:00:00.000000000-00:00"
+		},
 		"resume": {
-			"contact": {
-                "created_on": "2000-01-01T00:00:00.000000000-00:00",
-                "fields": {},
-                "id": 1234567,
-                "language": "eng",
-                "name": "Ben Haggerty",
-                "timezone": "America/Guayaquil",
-                "urns": [
-                    "tel:+12065551212"
-                ],
-                "uuid": "ba96bf7f-bc2a-4873-a7c7-254d1927c4e3"
-            },
-            "environment": {
-                "allowed_languages": [
-                    "eng",
-                    "fra"
-                ],
-                "date_format": "YYYY-MM-DD",
-                "default_language": "eng",
-                "time_format": "hh:mm",
-                "timezone": "America/New_York"
-            },
-            "msg": {
-                "channel": {
-                    "name": "Twitter",
-                    "uuid": "0f661e8b-ea9d-4bd3-9953-d368340acf91"
-                },
-                "text": "$$MESSAGE$$",
-                "urn": "tel:+12065551212",
-                "uuid": "9bf91c2b-ce58-4cef-aacc-281e03f69ab5"
-            },
+			"event": {
+				"type": "msg_received",
+				"created_on": "2000-01-01T00:00:00.000000000-00:00",
+				"msg": {
+					"channel": {
+						"name": "Twitter",
+						"uuid": "0f661e8b-ea9d-4bd3-9953-d368340acf91"
+					},
+					"text": "$$MESSAGE$$",
+					"urn": "tel:+12065551212",
+					"uuid": "9bf91c2b-ce58-4cef-aacc-281e03f69ab5"
+				}
+			},
             "resumed_on": "2000-01-01T00:00:00.000000000-00:00",
             "type": "msg"
 		},
@@ -111,34 +97,29 @@ const (
 	customStartBody = `
 	{
 		"org_id": 1,
+		"contact": {
+			"uuid": "ba96bf7f-bc2a-4873-a7c7-254d1927c4e3",
+			"id": 1234567,
+			"name": "Ben Haggerty",
+			"status": "active",
+			"language": "eng",
+			"timezone": "America/Guayaquil",
+			"urns": [
+				"tel:+12065551212"
+			],
+			"fields": {},
+			"created_on": "2000-01-01T00:00:00.000000000-00:00"
+		},
 		"trigger": {
-			"contact": {
+			"event": {
+				"type": "msg_received",
 				"created_on": "2000-01-01T00:00:00.000000000-00:00",
-				"fields": {},
-				"id": 1234567,
-				"language": "eng",
-				"name": "Ben Haggerty",
-				"timezone": "America/Guayaquil",
-				"urns": [
-					"tel:+12065551212"
-				],
-				"uuid": "ba96bf7f-bc2a-4873-a7c7-254d1927c4e3"
-			},
-			"environment": {
-				"allowed_languages": [
-					"eng",
-					"fra"
-				],
-				"date_format": "YYYY-MM-DD",
-				"default_language": "eng",
-				"time_format": "hh:mm",
-				"timezone": "America/Los_Angeles"
-			},
-			"msg": {
-				"uuid": "2d611e17-fb22-457f-b802-b8f7ec5cda5b",
-				"channel": {"uuid": "440099cf-200c-4d45-a8e7-4a564f4a0e8b", "name": "Test Channel"},
-				"urn": "tel:+12065551212",
-				"text": "hi there"
+				"msg": {
+					"uuid": "2d611e17-fb22-457f-b802-b8f7ec5cda5b",
+					"channel": {"uuid": "440099cf-200c-4d45-a8e7-4a564f4a0e8b", "name": "Test Channel"},
+					"urn": "tel:+12065551212",
+					"text": "hi there"
+				}
 			},
 			"flow": {
 				"name": "Favorites",
@@ -214,13 +195,13 @@ func TestServer(t *testing.T) {
 	var session json.RawMessage
 
 	// add a trigger for our campaign flow with 'trigger'
-	testdata.InsertKeywordTrigger(rt, testdata.Org1, testdata.CampaignFlow, []string{"trigger"}, models.MatchOnly, nil, nil, nil)
+	testdb.InsertKeywordTrigger(rt, testdb.Org1, testdb.BackgroundFlow, []string{"trigger"}, models.MatchOnly, nil, nil, nil)
 
 	// and a trigger which will trigger an IVR flow
-	testdata.InsertKeywordTrigger(rt, testdata.Org1, testdata.IVRFlow, []string{"ivr"}, models.MatchOnly, nil, nil, nil)
+	testdb.InsertKeywordTrigger(rt, testdb.Org1, testdb.IVRFlow, []string{"ivr"}, models.MatchOnly, nil, nil, nil)
 
 	// also add a catch all
-	testdata.InsertCatchallTrigger(rt, testdata.Org1, testdata.CampaignFlow, nil, nil, nil)
+	testdb.InsertCatchallTrigger(rt, testdb.Org1, testdb.BackgroundFlow, nil, nil, nil)
 
 	tcs := []struct {
 		URL              string
@@ -239,8 +220,8 @@ func TestServer(t *testing.T) {
 
 		// start regular flow again but resume with a message that matches the campaign flow trigger
 		{"/mr/sim/start", "POST", startBody, "", 200, "What is your favorite color?"},
-		{"/mr/sim/resume", "POST", resumeBody, "trigger", 200, "it is time to consult with your patients"},
-		{"/mr/sim/resume", "POST", resumeBody, "I like blue!", 200, "it is time to consult with your patients"},
+		{"/mr/sim/resume", "POST", resumeBody, "trigger", 200, "Nothing to see here"},
+		{"/mr/sim/resume", "POST", resumeBody, "I like blue!", 200, "Nothing to see here"},
 
 		// start favorties again but this time resume with a message that matches the IVR flow trigger
 		{"/mr/sim/start", "POST", startBody, "", 200, "What is your favorite color?"},

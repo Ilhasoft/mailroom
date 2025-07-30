@@ -12,22 +12,22 @@ import (
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/core/tasks/handler"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/nyaruka/mailroom/testsuite/testdata"
+	"github.com/nyaruka/mailroom/testsuite/testdb"
 	"github.com/nyaruka/mailroom/utils/queues"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func QueueBatchTask(t *testing.T, rt *runtime.Runtime, org *testdata.Org, task tasks.Task) {
-	rc := rt.RP.Get()
+func QueueBatchTask(t *testing.T, rt *runtime.Runtime, org *testdb.Org, task tasks.Task) {
+	rc := rt.VK.Get()
 	defer rc.Close()
 
 	err := tasks.Queue(rc, tasks.BatchQueue, org.ID, task, false)
 	require.NoError(t, err)
 }
 
-func QueueContactTask(t *testing.T, rt *runtime.Runtime, org *testdata.Org, contact *testdata.Contact, ctask handler.Task) {
-	rc := rt.RP.Get()
+func QueueContactTask(t *testing.T, rt *runtime.Runtime, org *testdb.Org, contact *testdb.Contact, ctask handler.Task) {
+	rc := rt.VK.Get()
 	defer rc.Close()
 
 	err := handler.QueueTask(rc, org.ID, contact.ID, ctask)
@@ -35,7 +35,7 @@ func QueueContactTask(t *testing.T, rt *runtime.Runtime, org *testdata.Org, cont
 }
 
 func CurrentTasks(t *testing.T, rt *runtime.Runtime, qname string) map[models.OrgID][]*queues.Task {
-	rc := rt.RP.Get()
+	rc := rt.VK.Get()
 	defer rc.Close()
 
 	// get all active org queues
@@ -62,7 +62,7 @@ func CurrentTasks(t *testing.T, rt *runtime.Runtime, qname string) map[models.Or
 }
 
 func FlushTasks(t *testing.T, rt *runtime.Runtime, qnames ...string) map[string]int {
-	rc := rt.RP.Get()
+	rc := rt.VK.Get()
 	defer rc.Close()
 
 	var task *queues.Task

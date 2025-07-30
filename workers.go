@@ -16,7 +16,8 @@ import (
 // Foreman takes care of managing our set of workers and assigns msgs for each to send
 type Foreman struct {
 	rt               *runtime.Runtime
-	wg               *sync.WaitGroup
+	mrWG             *sync.WaitGroup // main mailroom wait group - workers added to this
+	fmWG             *sync.WaitGroup // foreman assignment wait group so we can wait for assignment to finish
 	queue            queues.Fair
 	workers          []*Worker
 	availableWorkers chan *Worker
@@ -27,14 +28,15 @@ type Foreman struct {
 func NewForeman(rt *runtime.Runtime, wg *sync.WaitGroup, q queues.Fair, maxWorkers int) *Foreman {
 	foreman := &Foreman{
 		rt:               rt,
-		wg:               wg,
+		mrWG:             wg,
+		fmWG:             &sync.WaitGroup{},
 		queue:            q,
 		workers:          make([]*Worker, maxWorkers),
 		availableWorkers: make(chan *Worker, maxWorkers),
 		quit:             make(chan bool),
 	}
 
-	for i := 0; i < maxWorkers; i++ {
+	for i := range maxWorkers {
 		foreman.workers[i] = NewWorker(foreman, i)
 	}
 
@@ -51,10 +53,14 @@ func (f *Foreman) Start() {
 
 // Stop stops the foreman and all its workers, the wait group of the worker can be used to track progress
 func (f *Foreman) Stop() {
+	close(f.quit)
+
+	// wait for foreman to finish assigning tasks before stopping workers
+	f.fmWG.Wait()
+
 	for _, worker := range f.workers {
 		worker.Stop()
 	}
-	close(f.quit)
 
 	slog.Info("foreman stopping", "comp", "foreman", "queue", f.queue)
 }
@@ -62,8 +68,8 @@ func (f *Foreman) Stop() {
 // Assign is our main loop for the Foreman, it takes care of popping the next outgoing task from our
 // backend and assigning them to workers
 func (f *Foreman) Assign() {
-	f.wg.Add(1)
-	defer f.wg.Done()
+	f.fmWG.Add(1)
+	defer f.fmWG.Done()
 	log := slog.With("comp", "foreman", "queue", f.queue)
 
 	log.Info("workers started and waiting", "workers", len(f.workers))
@@ -80,7 +86,7 @@ func (f *Foreman) Assign() {
 		// otherwise, grab the next task and assign it to a worker
 		case worker := <-f.availableWorkers:
 			// see if we have a task to work on
-			rc := f.rt.RP.Get()
+			rc := f.rt.VK.Get()
 			task, err := f.queue.Pop(rc)
 			rc.Close()
 
@@ -125,10 +131,10 @@ func NewWorker(foreman *Foreman, id int) *Worker {
 
 // Start starts our Worker's goroutine and has it start waiting for tasks from the foreman
 func (w *Worker) Start() {
-	w.foreman.wg.Add(1)
+	w.foreman.mrWG.Add(1)
 
 	go func() {
-		defer w.foreman.wg.Done()
+		defer w.foreman.mrWG.Done()
 
 		log := slog.With("queue", w.foreman.queue, "worker_id", w.id)
 		log.Debug("started")
@@ -168,7 +174,7 @@ func (w *Worker) handleTask(task *queues.Task) {
 		}
 
 		// mark our task as complete
-		rc := w.foreman.rt.RP.Get()
+		rc := w.foreman.rt.VK.Get()
 		err := w.foreman.queue.Done(rc, task.OwnerID)
 		if err != nil {
 			log.Error("unable to mark task as complete", "error", err)

@@ -2,15 +2,14 @@ package models_test
 
 import (
 	"testing"
-	"time"
 
 	"github.com/nyaruka/gocommon/dbutil/assertdb"
 	"github.com/nyaruka/gocommon/urns"
 	"github.com/nyaruka/goflow/flows"
+	"github.com/nyaruka/goflow/flows/events"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/testsuite"
-	"github.com/nyaruka/mailroom/testsuite/testdata"
-
+	"github.com/nyaruka/mailroom/testsuite/testdb"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 )
@@ -22,16 +21,15 @@ func TestAirtimeTransfers(t *testing.T) {
 
 	// insert a transfer
 	transfer := models.NewAirtimeTransfer(
-		flows.AirtimeTransferUUID("3fd9af31-0fe9-4b63-bb8f-00805355c905"),
-		testdata.Org1.ID,
-		models.AirtimeTransferStatusSuccess,
-		"2237512891",
-		testdata.Cathy.ID,
-		urns.URN("tel:+250700000001"),
-		urns.URN("tel:+250700000002"),
-		"RWF",
-		decimal.RequireFromString(`100`),
-		time.Now(),
+		testdb.Org1.ID,
+		testdb.Cathy.ID,
+		events.NewAirtimeTransferred(&flows.AirtimeTransfer{
+			ExternalID: "2237512891",
+			Sender:     urns.URN("tel:+250700000001"),
+			Recipient:  urns.URN("tel:+250700000002"),
+			Currency:   "RWF",
+			Amount:     decimal.RequireFromString(`100`),
+		}, nil),
 	)
 	err := models.InsertAirtimeTransfers(ctx, rt.DB, []*models.AirtimeTransfer{transfer})
 	assert.Nil(t, err)
@@ -40,19 +38,18 @@ func TestAirtimeTransfers(t *testing.T) {
 
 	// insert a failed transfer with nil sender, empty currency
 	transfer = models.NewAirtimeTransfer(
-		flows.AirtimeTransferUUID("e59dbe78-a159-4027-aae9-3232b00c77d5"),
-		testdata.Org1.ID,
-		models.AirtimeTransferStatusFailed,
-		"2237512891",
-		testdata.Cathy.ID,
-		urns.NilURN,
-		urns.URN("tel:+250700000002"),
-		"",
-		decimal.Zero,
-		time.Now(),
+		testdb.Org1.ID,
+		testdb.Cathy.ID,
+		events.NewAirtimeTransferred(&flows.AirtimeTransfer{
+			ExternalID: "2237512891",
+			Sender:     urns.NilURN,
+			Recipient:  urns.URN("tel:+250700000002"),
+			Currency:   "",
+			Amount:     decimal.Zero,
+		}, nil),
 	)
 	err = models.InsertAirtimeTransfers(ctx, rt.DB, []*models.AirtimeTransfer{transfer})
 	assert.Nil(t, err)
 
-	assertdb.Query(t, rt.DB, `SELECT count(*) from airtime_airtimetransfer WHERE org_id = $1 AND status = $2`, testdata.Org1.ID, models.AirtimeTransferStatusFailed).Returns(1)
+	assertdb.Query(t, rt.DB, `SELECT count(*) from airtime_airtimetransfer WHERE org_id = $1 AND status = $2`, testdb.Org1.ID, models.AirtimeTransferStatusFailed).Returns(1)
 }

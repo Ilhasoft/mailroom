@@ -1,7 +1,8 @@
 # 📬 Mailroom
 
-[![Build Status](https://github.com/rapidpro/mailroom/workflows/CI/badge.svg)](https://github.com/rapidpro/mailroom/actions?query=workflow%3ACI)
-[![codecov](https://codecov.io/gh/rapidpro/mailroom/branch/main/graph/badge.svg)](https://codecov.io/gh/rapidpro/mailroom)
+[![tag](https://img.shields.io/github/tag/nyaruka/mailroom.svg)](https://github.com/nyaruka/mailroom/releases)
+[![Build Status](https://github.com/nyaruka/mailroom/workflows/CI/badge.svg)](https://github.com/nyaruka/mailroom/actions?query=workflow%3ACI)
+[![codecov](https://codecov.io/gh/nyaruka/mailroom/branch/main/graph/badge.svg)](https://codecov.io/gh/nyaruka/mailroom)
 
 Task handling service for the RapidPro/TextIt platform.
 
@@ -27,7 +28,7 @@ environment variables and parameters and for more details on each option.
 - `MAILROOM_ATTACHMENT_DOMAIN`: domain that will be used for relative attachments in flows
 - `MAILROOM_DB`: URL describing how to connect to the RapidPro database (default "postgres://temba:temba@localhost/temba?sslmode=disable")
 - `MAILROOM_READONLY_DB`: URL for an additional database connection for read-only operations (optional)
-- `MAILROOM_REDIS`: URL describing how to connect to Redis (default "redis://localhost:6379/15")
+- `MAILROOM_VALKEY`: URL describing how to connect to Valkey (default "valkey://localhost:6379/15")
 - `MAILROOM_SMTP_SERVER`: SMTP configuration for sending emails ex: smtp://user%40password@server:port/?from=foo%40gmail.com
 - `MAILROOM_ANDROID_FCM_SERVICE_ACCOUNT_FILE`: FCM Service Account Credentials JSON File path used to notify Android relayers to sync
 - `MAILROOM_ELASTIC_USERNAME`: ElasticSearch username for Basic Auth
@@ -37,22 +38,23 @@ environment variables and parameters and for more details on each option.
  
 ### AWS services:
 
-- `MAILROOM_AWS_ACCESS_KEY_ID`: AWS access key id used to authenticate to AWS
-- `MAILROOM_AWS_SECRET_ACCESS_KEY` AWS secret access key used to authenticate to AWS
-- `MAILROOM_AWS_REGION`: AWS region (ex: `eu-west-1`)
-- `MAILROOM_S3_ATTACHMENTS_BUCKET`: name of your S3 bucket (ex: `mailroom-attachments`)
-- `MAILROOM_S3_SESSIONS_BUCKET`: name of your S3 bucket (ex: `mailroom-sessions`)
+ * `MAILROOM_AWS_ACCESS_KEY_ID`: AWS access key id used to authenticate to AWS
+ * `MAILROOM_AWS_SECRET_ACCESS_KEY`: AWS secret access key used to authenticate to AWS
+ * `MAILROOM_AWS_REGION`: AWS region (ex: `eu-west-1`)
+ * `MAILROOM_S3_ATTACHMENTS_BUCKET`: name of your S3 bucket (ex: `mailroom-attachments`)
+ * `MAILROOM_S3_SESSIONS_BUCKET`: name of your S3 bucket (ex: `mailroom-sessions`)
 
 ### Flow engine configuration:
 
-- `MAILROOM_MAX_STEPS_PER_SPRINT`: maximum number of steps allowed in a single engine sprint
-- `MAILROOM_MAX_RESUMES_PER_SESSION`: maximum number of resumes allowed in an engine session
-- `MAILROOM_MAX_VALUE_LENGTH`: maximum length in characters of contact field and run result values
+ * `MAILROOM_MAX_STEPS_PER_SPRINT`: maximum number of steps allowed in a single engine sprint
+ * `MAILROOM_MAX_RESUMES_PER_SESSION`: maximum number of resumes allowed in an engine session
+ * `MAILROOM_MAX_VALUE_LENGTH`: maximum length in characters of contact field and run result values
 
 ### Logging and error reporting:
 
-- `MAILROOM_SENTRY_DSN`: DSN to use when logging errors to Sentry
-- `MAILROOM_LOG_LEVEL`: logging level mailroom should use (default is `warn`)
+ * `MAILROOM_DEPLOYMENT_ID`: used for metrics reporting
+ * `MAILROOM_SENTRY_DSN`: DSN to use when logging errors to Sentry
+ * `MAILROOM_LOG_LEVEL`: logging level to use (default is `warn`)
 
 ## Development
 

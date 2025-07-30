@@ -2,15 +2,14 @@ package starts_test
 
 import (
 	"testing"
-	"time"
 
 	"github.com/nyaruka/gocommon/dbutil/assertdb"
-	_ "github.com/nyaruka/mailroom/core/handlers"
 	"github.com/nyaruka/mailroom/core/models"
+	_ "github.com/nyaruka/mailroom/core/runner/handlers"
 	"github.com/nyaruka/mailroom/core/tasks"
 	"github.com/nyaruka/mailroom/core/tasks/starts"
 	"github.com/nyaruka/mailroom/testsuite"
-	"github.com/nyaruka/mailroom/testsuite/testdata"
+	"github.com/nyaruka/mailroom/testsuite/testdb"
 	"github.com/nyaruka/mailroom/utils/queues"
 	"github.com/stretchr/testify/assert"
 )
@@ -20,14 +19,10 @@ func TestStartFlowTask(t *testing.T) {
 
 	defer testsuite.Reset(testsuite.ResetAll)
 
-	rc := rt.RP.Get()
+	rc := rt.VK.Get()
 	defer rc.Close()
 
-	// convert our single message flow to an actual background flow that shouldn't interrupt
-	rt.DB.MustExec(`UPDATE flows_flow SET flow_type = 'B' WHERE id = $1`, testdata.SingleMessage.ID)
-
-	sID := testdata.InsertWaitingSession(rt, testdata.Org1, testdata.George, models.FlowTypeMessaging, testdata.Favorites, models.NilCallID, time.Now(), time.Now(), true, nil)
-	testdata.InsertFlowRun(rt, testdata.Org1, sID, testdata.George, testdata.Favorites, models.RunStatusWaiting, "")
+	testdb.InsertWaitingSession(rt, testdb.Org1, testdb.George, models.FlowTypeMessaging, testdb.Favorites, models.NilCallID)
 
 	tcs := []struct {
 		flowID                   models.FlowID
@@ -46,7 +41,7 @@ func TestStartFlowTask(t *testing.T) {
 		expectedActiveRuns       map[models.FlowID]int
 	}{
 		{ // 0: empty flow start
-			flowID:                   testdata.Favorites.ID,
+			flowID:                   testdb.Favorites.ID,
 			excludeInAFlow:           true,
 			excludeStartedPreviously: true,
 			queue:                    tasks.BatchQueue,
@@ -54,11 +49,11 @@ func TestStartFlowTask(t *testing.T) {
 			expectedBatchCount:       0,
 			expectedTotalCount:       0,
 			expectedStatus:           models.StartStatusCompleted,
-			expectedActiveRuns:       map[models.FlowID]int{testdata.Favorites.ID: 1, testdata.PickANumber.ID: 0, testdata.SingleMessage.ID: 0},
+			expectedActiveRuns:       map[models.FlowID]int{testdb.Favorites.ID: 1, testdb.PickANumber.ID: 0, testdb.BackgroundFlow.ID: 0},
 		},
 		{ // 1: single group
-			flowID:                   testdata.Favorites.ID,
-			groupIDs:                 []models.GroupID{testdata.DoctorsGroup.ID},
+			flowID:                   testdb.Favorites.ID,
+			groupIDs:                 []models.GroupID{testdb.DoctorsGroup.ID},
 			excludeInAFlow:           true,
 			excludeStartedPreviously: true,
 			queue:                    tasks.BatchQueue,
@@ -66,12 +61,12 @@ func TestStartFlowTask(t *testing.T) {
 			expectedBatchCount:       2,
 			expectedTotalCount:       121,
 			expectedStatus:           models.StartStatusCompleted,
-			expectedActiveRuns:       map[models.FlowID]int{testdata.Favorites.ID: 122, testdata.PickANumber.ID: 0, testdata.SingleMessage.ID: 0},
+			expectedActiveRuns:       map[models.FlowID]int{testdb.Favorites.ID: 122, testdb.PickANumber.ID: 0, testdb.BackgroundFlow.ID: 0},
 		},
 		{ // 2: group and contact (but all already active)
-			flowID:                   testdata.Favorites.ID,
-			groupIDs:                 []models.GroupID{testdata.DoctorsGroup.ID},
-			contactIDs:               []models.ContactID{testdata.Cathy.ID},
+			flowID:                   testdb.Favorites.ID,
+			groupIDs:                 []models.GroupID{testdb.DoctorsGroup.ID},
+			contactIDs:               []models.ContactID{testdb.Cathy.ID},
 			excludeInAFlow:           true,
 			excludeStartedPreviously: true,
 			queue:                    tasks.BatchQueue,
@@ -79,11 +74,11 @@ func TestStartFlowTask(t *testing.T) {
 			expectedBatchCount:       0,
 			expectedTotalCount:       0,
 			expectedStatus:           models.StartStatusCompleted,
-			expectedActiveRuns:       map[models.FlowID]int{testdata.Favorites.ID: 122, testdata.PickANumber.ID: 0, testdata.SingleMessage.ID: 0},
+			expectedActiveRuns:       map[models.FlowID]int{testdb.Favorites.ID: 122, testdb.PickANumber.ID: 0, testdb.BackgroundFlow.ID: 0},
 		},
 		{ // 3: don't exclude started previously
-			flowID:                   testdata.Favorites.ID,
-			contactIDs:               []models.ContactID{testdata.Cathy.ID},
+			flowID:                   testdb.Favorites.ID,
+			contactIDs:               []models.ContactID{testdb.Cathy.ID},
 			excludeInAFlow:           false,
 			excludeStartedPreviously: false,
 			queue:                    tasks.HandlerQueue,
@@ -91,34 +86,34 @@ func TestStartFlowTask(t *testing.T) {
 			expectedBatchCount:       1,
 			expectedTotalCount:       1,
 			expectedStatus:           models.StartStatusCompleted,
-			expectedActiveRuns:       map[models.FlowID]int{testdata.Favorites.ID: 122, testdata.PickANumber.ID: 0, testdata.SingleMessage.ID: 0},
+			expectedActiveRuns:       map[models.FlowID]int{testdb.Favorites.ID: 122, testdb.PickANumber.ID: 0, testdb.BackgroundFlow.ID: 0},
 		},
 		{ // 4: previous group and one new contact
-			flowID:                   testdata.Favorites.ID,
-			groupIDs:                 []models.GroupID{testdata.DoctorsGroup.ID},
-			contactIDs:               []models.ContactID{testdata.Bob.ID},
+			flowID:                   testdb.Favorites.ID,
+			groupIDs:                 []models.GroupID{testdb.DoctorsGroup.ID},
+			contactIDs:               []models.ContactID{testdb.Bob.ID},
 			excludeStartedPreviously: true,
 			queue:                    tasks.BatchQueue,
 			expectedContactCount:     122,
 			expectedBatchCount:       1,
 			expectedTotalCount:       1,
 			expectedStatus:           models.StartStatusCompleted,
-			expectedActiveRuns:       map[models.FlowID]int{testdata.Favorites.ID: 123, testdata.PickANumber.ID: 0, testdata.SingleMessage.ID: 0},
+			expectedActiveRuns:       map[models.FlowID]int{testdb.Favorites.ID: 123, testdb.PickANumber.ID: 0, testdb.BackgroundFlow.ID: 0},
 		},
 		{ // 5: single contact, no restart
-			flowID:                   testdata.Favorites.ID,
-			contactIDs:               []models.ContactID{testdata.Bob.ID},
+			flowID:                   testdb.Favorites.ID,
+			contactIDs:               []models.ContactID{testdb.Bob.ID},
 			excludeStartedPreviously: true,
 			queue:                    tasks.HandlerQueue,
 			expectedContactCount:     1,
 			expectedBatchCount:       0,
 			expectedTotalCount:       0,
 			expectedStatus:           models.StartStatusCompleted,
-			expectedActiveRuns:       map[models.FlowID]int{testdata.Favorites.ID: 123, testdata.PickANumber.ID: 0, testdata.SingleMessage.ID: 0},
+			expectedActiveRuns:       map[models.FlowID]int{testdb.Favorites.ID: 123, testdb.PickANumber.ID: 0, testdb.BackgroundFlow.ID: 0},
 		},
 		{ // 6: single contact, include active, but no restart
-			flowID:                   testdata.Favorites.ID,
-			contactIDs:               []models.ContactID{testdata.Bob.ID},
+			flowID:                   testdb.Favorites.ID,
+			contactIDs:               []models.ContactID{testdb.Bob.ID},
 			excludeInAFlow:           false,
 			excludeStartedPreviously: true,
 			queue:                    tasks.HandlerQueue,
@@ -126,11 +121,11 @@ func TestStartFlowTask(t *testing.T) {
 			expectedBatchCount:       0,
 			expectedTotalCount:       0,
 			expectedStatus:           models.StartStatusCompleted,
-			expectedActiveRuns:       map[models.FlowID]int{testdata.Favorites.ID: 123, testdata.PickANumber.ID: 0, testdata.SingleMessage.ID: 0},
+			expectedActiveRuns:       map[models.FlowID]int{testdb.Favorites.ID: 123, testdb.PickANumber.ID: 0, testdb.BackgroundFlow.ID: 0},
 		},
 		{ // 7: single contact, include active and restart
-			flowID:                   testdata.Favorites.ID,
-			contactIDs:               []models.ContactID{testdata.Bob.ID},
+			flowID:                   testdb.Favorites.ID,
+			contactIDs:               []models.ContactID{testdb.Bob.ID},
 			excludeInAFlow:           false,
 			excludeStartedPreviously: false,
 			queue:                    tasks.HandlerQueue,
@@ -138,10 +133,10 @@ func TestStartFlowTask(t *testing.T) {
 			expectedBatchCount:       1,
 			expectedTotalCount:       1,
 			expectedStatus:           models.StartStatusCompleted,
-			expectedActiveRuns:       map[models.FlowID]int{testdata.Favorites.ID: 123, testdata.PickANumber.ID: 0, testdata.SingleMessage.ID: 0},
+			expectedActiveRuns:       map[models.FlowID]int{testdb.Favorites.ID: 123, testdb.PickANumber.ID: 0, testdb.BackgroundFlow.ID: 0},
 		},
 		{ // 8: query start
-			flowID:                   testdata.Favorites.ID,
+			flowID:                   testdb.Favorites.ID,
 			query:                    "bob",
 			excludeInAFlow:           false,
 			excludeStartedPreviously: false,
@@ -150,10 +145,10 @@ func TestStartFlowTask(t *testing.T) {
 			expectedBatchCount:       1,
 			expectedTotalCount:       1,
 			expectedStatus:           models.StartStatusCompleted,
-			expectedActiveRuns:       map[models.FlowID]int{testdata.Favorites.ID: 123, testdata.PickANumber.ID: 0, testdata.SingleMessage.ID: 0},
+			expectedActiveRuns:       map[models.FlowID]int{testdb.Favorites.ID: 123, testdb.PickANumber.ID: 0, testdb.BackgroundFlow.ID: 0},
 		},
 		{ // 9: query start with invalid query
-			flowID:                   testdata.Favorites.ID,
+			flowID:                   testdb.Favorites.ID,
 			query:                    "xyz = 45",
 			excludeInAFlow:           false,
 			excludeStartedPreviously: false,
@@ -162,21 +157,21 @@ func TestStartFlowTask(t *testing.T) {
 			expectedBatchCount:       0,
 			expectedTotalCount:       0,
 			expectedStatus:           models.StartStatusFailed,
-			expectedActiveRuns:       map[models.FlowID]int{testdata.Favorites.ID: 123, testdata.PickANumber.ID: 0, testdata.SingleMessage.ID: 0},
+			expectedActiveRuns:       map[models.FlowID]int{testdb.Favorites.ID: 123, testdb.PickANumber.ID: 0, testdb.BackgroundFlow.ID: 0},
 		},
 		{ // 10: new contact
-			flowID:               testdata.Favorites.ID,
+			flowID:               testdb.Favorites.ID,
 			createContact:        true,
 			queue:                tasks.HandlerQueue,
 			expectedContactCount: 1,
 			expectedBatchCount:   1,
 			expectedTotalCount:   1,
 			expectedStatus:       models.StartStatusCompleted,
-			expectedActiveRuns:   map[models.FlowID]int{testdata.Favorites.ID: 124, testdata.PickANumber.ID: 0, testdata.SingleMessage.ID: 0},
+			expectedActiveRuns:   map[models.FlowID]int{testdb.Favorites.ID: 124, testdb.PickANumber.ID: 0, testdb.BackgroundFlow.ID: 0},
 		},
 		{ // 11: other messaging flow
-			flowID:                   testdata.PickANumber.ID,
-			contactIDs:               []models.ContactID{testdata.Bob.ID},
+			flowID:                   testdb.PickANumber.ID,
+			contactIDs:               []models.ContactID{testdb.Bob.ID},
 			excludeInAFlow:           false,
 			excludeStartedPreviously: true,
 			queue:                    tasks.HandlerQueue,
@@ -184,11 +179,11 @@ func TestStartFlowTask(t *testing.T) {
 			expectedBatchCount:       1,
 			expectedTotalCount:       1,
 			expectedStatus:           models.StartStatusCompleted,
-			expectedActiveRuns:       map[models.FlowID]int{testdata.Favorites.ID: 123, testdata.PickANumber.ID: 1, testdata.SingleMessage.ID: 0},
+			expectedActiveRuns:       map[models.FlowID]int{testdb.Favorites.ID: 123, testdb.PickANumber.ID: 1, testdb.BackgroundFlow.ID: 0},
 		},
 		{ // 12: background flow
-			flowID:                   testdata.SingleMessage.ID,
-			contactIDs:               []models.ContactID{testdata.Bob.ID},
+			flowID:                   testdb.BackgroundFlow.ID,
+			contactIDs:               []models.ContactID{testdb.Bob.ID},
 			excludeInAFlow:           false,
 			excludeStartedPreviously: true,
 			queue:                    tasks.HandlerQueue,
@@ -196,12 +191,12 @@ func TestStartFlowTask(t *testing.T) {
 			expectedBatchCount:       1,
 			expectedTotalCount:       1,
 			expectedStatus:           models.StartStatusCompleted,
-			expectedActiveRuns:       map[models.FlowID]int{testdata.Favorites.ID: 123, testdata.PickANumber.ID: 1, testdata.SingleMessage.ID: 0},
+			expectedActiveRuns:       map[models.FlowID]int{testdb.Favorites.ID: 123, testdb.PickANumber.ID: 1, testdb.BackgroundFlow.ID: 0},
 		},
 		{ // 13: exclude group
-			flowID:                   testdata.Favorites.ID,
-			contactIDs:               []models.ContactID{testdata.Cathy.ID, testdata.Bob.ID},
-			excludeGroupIDs:          []models.GroupID{testdata.DoctorsGroup.ID}, // should exclude Cathy
+			flowID:                   testdb.Favorites.ID,
+			contactIDs:               []models.ContactID{testdb.Cathy.ID, testdb.Bob.ID},
+			excludeGroupIDs:          []models.GroupID{testdb.DoctorsGroup.ID}, // should exclude Cathy
 			excludeInAFlow:           false,
 			excludeStartedPreviously: false,
 			queue:                    tasks.HandlerQueue,
@@ -209,7 +204,7 @@ func TestStartFlowTask(t *testing.T) {
 			expectedBatchCount:       1,
 			expectedTotalCount:       1,
 			expectedStatus:           models.StartStatusCompleted,
-			expectedActiveRuns:       map[models.FlowID]int{testdata.Favorites.ID: 124, testdata.PickANumber.ID: 0, testdata.SingleMessage.ID: 0},
+			expectedActiveRuns:       map[models.FlowID]int{testdb.Favorites.ID: 124, testdb.PickANumber.ID: 0, testdb.BackgroundFlow.ID: 0},
 		},
 	}
 
@@ -217,7 +212,7 @@ func TestStartFlowTask(t *testing.T) {
 		testsuite.ReindexElastic(ctx)
 
 		// handle our start task
-		start := models.NewFlowStart(testdata.Org1.ID, models.StartTypeManual, tc.flowID).
+		start := models.NewFlowStart(testdb.Org1.ID, models.StartTypeManual, tc.flowID).
 			WithGroupIDs(tc.groupIDs).
 			WithExcludeGroupIDs(tc.excludeGroupIDs).
 			WithContactIDs(tc.contactIDs).
@@ -227,9 +222,9 @@ func TestStartFlowTask(t *testing.T) {
 			WithCreateContact(tc.createContact)
 
 		err := models.InsertFlowStarts(ctx, rt.DB, []*models.FlowStart{start})
-		assert.NoError(t, err)
+		assert.NoError(t, err, "%d: failed to insert start", i)
 
-		err = tasks.Queue(rc, tc.queue, testdata.Org1.ID, &starts.StartFlowTask{FlowStart: start}, false)
+		err = tasks.Queue(rc, tc.queue, testdb.Org1.ID, &starts.StartFlowTask{FlowStart: start}, false)
 		assert.NoError(t, err)
 
 		taskCounts := testsuite.FlushTasks(t, rt)
@@ -257,16 +252,16 @@ func TestStartFlowTask(t *testing.T) {
 
 func TestStartFlowTaskNonPersistedStart(t *testing.T) {
 	_, rt := testsuite.Runtime()
-	rc := rt.RP.Get()
+	rc := rt.VK.Get()
 	defer rc.Close()
 
 	defer testsuite.Reset(testsuite.ResetData)
 
 	// create a start and start it...
-	start := models.NewFlowStart(models.OrgID(1), models.StartTypeManual, testdata.SingleMessage.ID).
-		WithContactIDs([]models.ContactID{testdata.Cathy.ID, testdata.Bob.ID})
+	start := models.NewFlowStart(models.OrgID(1), models.StartTypeManual, testdb.SingleMessage.ID).
+		WithContactIDs([]models.ContactID{testdb.Cathy.ID, testdb.Bob.ID})
 
-	err := tasks.Queue(rc, tasks.ThrottledQueue, testdata.Org1.ID, &starts.StartFlowTask{FlowStart: start}, false)
+	err := tasks.Queue(rc, tasks.ThrottledQueue, testdb.Org1.ID, &starts.StartFlowTask{FlowStart: start}, false)
 	assert.NoError(t, err)
 	testsuite.FlushTasks(t, rt)
 

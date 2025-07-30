@@ -25,7 +25,7 @@ type Config struct {
 	DB         string `validate:"url,startswith=postgres:"           help:"URL for your Postgres database"`
 	ReadonlyDB string `validate:"omitempty,url,startswith=postgres:" help:"URL of optional connection to readonly database instance"`
 	DBPoolSize int    `                                              help:"the size of our db pool"`
-	Redis      string `validate:"url,startswith=redis:"              help:"URL for your Redis instance"`
+	Valkey     string `validate:"url,startswith=valkey:"             help:"URL for your Valkey instance"`
 	SentryDSN  string `                                              help:"the DSN used for logging errors to Sentry"`
 
 	Address          string `help:"the address to bind our web server to"`
@@ -34,9 +34,8 @@ type Config struct {
 	Domain           string `help:"the domain that mailroom is listening on"`
 	AttachmentDomain string `help:"the domain that will be used for relative attachment"`
 
-	BatchWorkers         int  `help:"the number of go routines that will be used to handle batch events"`
-	HandlerWorkers       int  `help:"the number of go routines that will be used to handle messages"`
-	RetryPendingMessages bool `help:"whether to requeue pending messages older than five minutes to retry"`
+	BatchWorkers   int `help:"the number of go routines that will be used to handle batch events"`
+	HandlerWorkers int `help:"the number of go routines that will be used to handle messages"`
 
 	WebhooksTimeout              int     `help:"the timeout in milliseconds for webhook calls from engine"`
 	WebhooksMaxRetries           int     `help:"the number of times to retry a failed webhook call"`
@@ -94,18 +93,17 @@ func NewDefaultConfig() *Config {
 		DB:         "postgres://temba:temba@localhost/temba?sslmode=disable&Timezone=UTC",
 		ReadonlyDB: "",
 		DBPoolSize: 36,
-		Redis:      "redis://localhost:6379/15",
+		Valkey:     "valkey://localhost:6379/15",
 
 		Address: "localhost",
 		Port:    8090,
 
-		BatchWorkers:         4,
-		HandlerWorkers:       32,
-		RetryPendingMessages: true,
+		BatchWorkers:   4,
+		HandlerWorkers: 32,
 
 		WebhooksTimeout:              15000,
 		WebhooksMaxRetries:           2,
-		WebhooksMaxBodyBytes:         1024 * 1024, // 1MB
+		WebhooksMaxBodyBytes:         256 * 1024, // 256 KiB
 		WebhooksInitialBackoff:       5000,
 		WebhooksBackoffJitter:        0.5,
 		WebhooksHealthyResponseLimit: 10000,

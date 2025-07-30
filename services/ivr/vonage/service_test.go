@@ -14,17 +14,18 @@ import (
 	"github.com/nyaruka/goflow/flows"
 	"github.com/nyaruka/goflow/flows/events"
 	"github.com/nyaruka/goflow/flows/routers/waits/hints"
+	"github.com/nyaruka/goflow/flows/triggers"
 	"github.com/nyaruka/mailroom/core/ivr"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/testsuite"
-	"github.com/nyaruka/mailroom/testsuite/testdata"
+	"github.com/nyaruka/mailroom/testsuite/testdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestResponseForSprint(t *testing.T) {
 	ctx, rt := testsuite.Runtime()
-	rc := rt.RP.Get()
+	rc := rt.VK.Get()
 	defer rc.Close()
 
 	defer testsuite.Reset(testsuite.ResetAll)
@@ -40,23 +41,23 @@ func TestResponseForSprint(t *testing.T) {
 
 	urn := urns.URN("tel:+12067799294")
 	expiresOn := time.Now().Add(time.Hour)
-	channelRef := assets.NewChannelReference(testdata.VonageChannel.UUID, "Vonage Channel")
+	channelRef := assets.NewChannelReference(testdb.VonageChannel.UUID, "Vonage Channel")
 
 	resumeURL := "http://temba.io/resume?session=1"
 
 	// deactivate our twilio channel
-	rt.DB.MustExec(`UPDATE channels_channel SET is_active = FALSE WHERE id = $1`, testdata.TwilioChannel.ID)
+	rt.DB.MustExec(`UPDATE channels_channel SET is_active = FALSE WHERE id = $1`, testdb.TwilioChannel.ID)
 
 	// update callback domain and roles for channel
-	rt.DB.MustExec(`UPDATE channels_channel SET config = config || '{"callback_domain": "localhost:8091"}'::jsonb, role='SRCA' WHERE id = $1`, testdata.VonageChannel.ID)
+	rt.DB.MustExec(`UPDATE channels_channel SET config = config || '{"callback_domain": "localhost:8091"}'::jsonb, role='SRCA' WHERE id = $1`, testdb.VonageChannel.ID)
 
 	// set our UUID generator
 	uuids.SetGenerator(uuids.NewSeededGenerator(0, time.Now))
 
-	oa, err := models.GetOrgAssets(ctx, rt, testdata.Org1.ID)
+	oa, err := models.GetOrgAssets(ctx, rt, testdb.Org1.ID)
 	require.NoError(t, err)
 
-	channel := oa.ChannelByUUID(testdata.VonageChannel.UUID)
+	channel := oa.ChannelByUUID(testdb.VonageChannel.UUID)
 	assert.NotNil(t, channel)
 
 	p, err := NewServiceFromChannel(http.DefaultClient, channel)
@@ -64,8 +65,12 @@ func TestResponseForSprint(t *testing.T) {
 
 	provider := p.(*service)
 
-	conn, err := models.InsertCall(ctx, rt.DB, testdata.Org1.ID, testdata.VonageChannel.ID, models.NilStartID, testdata.Bob.ID, testdata.Bob.URNID, models.CallDirectionOut, models.CallStatusInProgress, "EX123")
-	require.NoError(t, err)
+	bob, _, bobURNs := testdb.Bob.Load(rt, oa)
+
+	trigger := triggers.NewBuilder(testdb.Favorites.Reference()).Manual().Build()
+	call := models.NewOutgoingCall(testdb.Org1.ID, oa.ChannelByUUID(testdb.VonageChannel.UUID), bob, bobURNs[0].ID, trigger)
+	err = models.InsertCalls(ctx, rt.DB, []*models.Call{call})
+	assert.NoError(t, err)
 
 	indentMarshal = false
 
@@ -73,62 +78,62 @@ func TestResponseForSprint(t *testing.T) {
 		events   []flows.Event
 		expected string
 	}{
-		{
+		{ // 0
 			[]flows.Event{
 				events.NewIVRCreated(flows.NewIVRMsgOut(urn, channelRef, "hello world", "", "")),
 			},
 			`[{"action":"talk","text":"hello world"}]`,
 		},
-		{
+		{ // 1
 			[]flows.Event{
 				events.NewIVRCreated(flows.NewIVRMsgOut(urn, channelRef, "hello world", "/recordings/foo.wav", "")),
 			},
 			`[{"action":"stream","streamUrl":["/recordings/foo.wav"]}]`,
 		},
-		{
+		{ // 2
 			[]flows.Event{
 				events.NewIVRCreated(flows.NewIVRMsgOut(urn, channelRef, "hello world", "https://temba.io/recordings/foo.wav", "")),
 			},
 			`[{"action":"stream","streamUrl":["https://temba.io/recordings/foo.wav"]}]`,
 		},
-		{
+		{ // 3
 			[]flows.Event{
 				events.NewIVRCreated(flows.NewIVRMsgOut(urn, channelRef, "hello world", "", "")),
 				events.NewIVRCreated(flows.NewIVRMsgOut(urn, channelRef, "goodbye", "", "")),
 			},
 			`[{"action":"talk","text":"hello world"},{"action":"talk","text":"goodbye"}]`,
 		},
-		{
+		{ // 4
 			[]flows.Event{
 				events.NewIVRCreated(flows.NewIVRMsgOut(urn, channelRef, "enter a number", "", "")),
-				events.NewMsgWait(nil, nil, hints.NewFixedDigitsHint(1)),
+				events.NewMsgWait(nil, expiresOn, hints.NewFixedDigits(1)),
 			},
 			`[{"action":"talk","text":"enter a number","bargeIn":true},{"action":"input","maxDigits":1,"submitOnHash":true,"timeOut":30,"eventUrl":["http://temba.io/resume?session=1\u0026wait_type=gather\u0026sig=4Yil1wUntXd%2F7AQx%2Bt0rkwihx%2Fg%3D"],"eventMethod":"POST"}]`,
 		},
-		{
+		{ // 5
 			[]flows.Event{
 				events.NewIVRCreated(flows.NewIVRMsgOut(urn, channelRef, "enter a number, then press #", "", "")),
-				events.NewMsgWait(nil, nil, hints.NewTerminatedDigitsHint("#")),
+				events.NewMsgWait(nil, expiresOn, hints.NewTerminatedDigits("#")),
 			},
 			`[{"action":"talk","text":"enter a number, then press #","bargeIn":true},{"action":"input","maxDigits":20,"submitOnHash":true,"timeOut":30,"eventUrl":["http://temba.io/resume?session=1\u0026wait_type=gather\u0026sig=4Yil1wUntXd%2F7AQx%2Bt0rkwihx%2Fg%3D"],"eventMethod":"POST"}]`,
 		},
-		{
+		{ // 6
 			[]flows.Event{
 				events.NewIVRCreated(flows.NewIVRMsgOut(urn, channelRef, "say something", "", "")),
-				events.NewMsgWait(nil, nil, hints.NewAudioHint()),
+				events.NewMsgWait(nil, expiresOn, hints.NewAudio()),
 			},
-			`[{"action":"talk","text":"say something"},{"action":"record","endOnKey":"#","timeOut":600,"endOnSilence":5,"eventUrl":["http://temba.io/resume?session=1\u0026wait_type=recording_url\u0026recording_uuid=f3ede2d6-becc-4ea3-ae5e-88526a9f4a57\u0026sig=1M351E3KlL5x2ZHZKCdWaQYP98g%3D"],"eventMethod":"POST"},{"action":"input","submitOnHash":true,"timeOut":1,"eventUrl":["http://temba.io/resume?session=1\u0026wait_type=record\u0026recording_uuid=f3ede2d6-becc-4ea3-ae5e-88526a9f4a57\u0026sig=deq3V%2BVVIHFMwboNhIxSpnVjAUQ%3D"],"eventMethod":"POST"}]`,
+			`[{"action":"talk","text":"say something"},{"action":"record","endOnKey":"#","timeOut":600,"endOnSilence":5,"eventUrl":["http://temba.io/resume?session=1\u0026wait_type=recording_url\u0026recording_uuid=3801aaca-eedf-4d5b-9066-64e8c0e4a771\u0026sig=S9SN7OELddL6zxiZTPZsCNfKFMw%3D"],"eventMethod":"POST"},{"action":"input","submitOnHash":true,"timeOut":1,"eventUrl":["http://temba.io/resume?session=1\u0026wait_type=record\u0026recording_uuid=3801aaca-eedf-4d5b-9066-64e8c0e4a771\u0026sig=YLz9dq5KiI3sVTC9O2vrgCSdAqc%3D"],"eventMethod":"POST"}]`,
 		},
-		{
+		{ // 7
 			[]flows.Event{
-				events.NewDialWait(urns.URN(`tel:+1234567890`), 60, 7200, &expiresOn),
+				events.NewDialWait(urns.URN(`tel:+1234567890`), 60, 7200, expiresOn),
 			},
-			`[{"action":"conversation","name":"8bcb9ef2-d4a6-4314-b68d-6d299761ea9e"}]`,
+			`[{"action":"conversation","name":"ece0b8b7-c196-4d91-8125-1b7c9c9ca520"}]`,
 		},
 	}
 
 	for i, tc := range tcs {
-		response, err := provider.responseForSprint(ctx, rt.RP, channel, conn, resumeURL, tc.events)
+		response, err := provider.responseForSprint(ctx, rt.VK, channel, call, resumeURL, tc.events)
 		assert.NoError(t, err, "%d: unexpected error")
 		assert.Equal(t, tc.expected, response, "%d: unexpected response", i)
 	}
@@ -145,8 +150,8 @@ func TestResponseForSprint(t *testing.T) {
 func TestRedactValues(t *testing.T) {
 	_, rt := testsuite.Runtime()
 
-	oa := testdata.Org1.Load(rt)
-	ch := oa.ChannelByUUID(testdata.VonageChannel.UUID)
+	oa := testdb.Org1.Load(rt)
+	ch := oa.ChannelByUUID(testdb.VonageChannel.UUID)
 	svc, _ := ivr.GetService(ch)
 
 	assert.NotNil(t, svc)

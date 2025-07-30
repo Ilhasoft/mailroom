@@ -16,14 +16,13 @@ import (
 	"github.com/gomodule/redigo/redis"
 	"github.com/jmoiron/sqlx"
 	"github.com/nyaruka/gocommon/aws/cwatch"
-	"github.com/nyaruka/gocommon/aws/dynamo"
 	"github.com/nyaruka/gocommon/aws/s3x"
 	"github.com/nyaruka/gocommon/jsonx"
 	"github.com/nyaruka/mailroom/core/models"
 	"github.com/nyaruka/mailroom/runtime"
-	"github.com/nyaruka/redisx/assertredis"
-	"github.com/nyaruka/rp-indexer/v9/indexers"
-	ixruntime "github.com/nyaruka/rp-indexer/v9/runtime"
+	"github.com/nyaruka/rp-indexer/v10/indexers"
+	ixruntime "github.com/nyaruka/rp-indexer/v10/runtime"
+	"github.com/nyaruka/vkutil/assertvk"
 )
 
 var _db *sqlx.DB
@@ -40,7 +39,7 @@ const (
 	ResetAll     = ResetFlag(^0)
 	ResetDB      = ResetFlag(1 << 1)
 	ResetData    = ResetFlag(1 << 2)
-	ResetRedis   = ResetFlag(1 << 3)
+	ResetValkey  = ResetFlag(1 << 3)
 	ResetStorage = ResetFlag(1 << 4)
 	ResetElastic = ResetFlag(1 << 5)
 	ResetDynamo  = ResetFlag(1 << 6)
@@ -55,8 +54,8 @@ func Reset(what ResetFlag) {
 	} else if what&ResetData > 0 {
 		resetData()
 	}
-	if what&ResetRedis > 0 {
-		resetRedis()
+	if what&ResetValkey > 0 {
+		resetValkey()
 	}
 	if what&ResetStorage > 0 {
 		resetStorage(ctx, rt)
@@ -86,7 +85,7 @@ func Runtime() (context.Context, *runtime.Runtime) {
 	cfg.DynamoEndpoint = "http://localhost:6000"
 	cfg.DynamoTablePrefix = "Test"
 
-	dyna, err := dynamo.NewService(cfg.AWSAccessKeyID, cfg.AWSSecretAccessKey, cfg.DynamoRegion, cfg.DynamoEndpoint, cfg.DynamoTablePrefix)
+	dytables, err := runtime.NewDynamoTables(cfg)
 	noError(err)
 
 	s3svc, err := s3x.NewService(cfg.AWSAccessKeyID, cfg.AWSSecretAccessKey, cfg.AWSRegion, cfg.S3Endpoint, cfg.S3Minio)
@@ -99,8 +98,8 @@ func Runtime() (context.Context, *runtime.Runtime) {
 	rt := &runtime.Runtime{
 		DB:         dbx,
 		ReadonlyDB: dbx.DB,
-		RP:         getRP(),
-		Dynamo:     dyna,
+		VK:         getRP(),
+		Dynamo:     dytables,
 		S3:         s3svc,
 		ES:         getES(),
 		CW:         cwSvc,
@@ -143,7 +142,7 @@ func getDB() *sqlx.DB {
 
 // returns a redis pool to our test database
 func getRP() *redis.Pool {
-	return assertredis.TestDB()
+	return assertvk.TestDB()
 }
 
 // returns a redis connection, Close() should be called on it when done
@@ -179,7 +178,7 @@ func resetDB() {
 }
 
 func loadTestDump() {
-	dump, err := os.Open(absPath("./testsuite/testfiles/postgres.dump"))
+	dump, err := os.Open(absPath("./testsuite/testdata/postgres.dump"))
 	must(err)
 	defer dump.Close()
 
@@ -212,9 +211,9 @@ func absPath(p string) string {
 	return path.Join(dir, p)
 }
 
-// resets our redis database
-func resetRedis() {
-	assertredis.FlushDB()
+// resets our valkey database
+func resetValkey() {
+	assertvk.FlushDB()
 }
 
 func resetStorage(ctx context.Context, rt *runtime.Runtime) {
@@ -243,7 +242,7 @@ func resetElastic(ctx context.Context, rt *runtime.Runtime) {
 }
 
 func resetDynamo(ctx context.Context, rt *runtime.Runtime) {
-	tablesFile, err := os.Open(absPath("./testsuite/testfiles/dynamo.json"))
+	tablesFile, err := os.Open(absPath("./testsuite/testdata/dynamo.json"))
 	must(err)
 	defer tablesFile.Close()
 
@@ -253,29 +252,29 @@ func resetDynamo(ctx context.Context, rt *runtime.Runtime) {
 	inputs := []*dynamodb.CreateTableInput{}
 	jsonx.MustUnmarshal(tablesJSON, &inputs)
 
+	client, err := runtime.NewDynamoClient(rt.Config)
+	must(err)
+
 	for _, input := range inputs {
-		input.TableName = aws.String(rt.Dynamo.TableName(*input.TableName))
+		input.TableName = aws.String(rt.Config.DynamoTablePrefix + *input.TableName)
 
 		// delete table if it exists
-		if _, err := rt.Dynamo.Client.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: input.TableName}); err == nil {
-			_, err := rt.Dynamo.Client.DeleteTable(ctx, &dynamodb.DeleteTableInput{TableName: input.TableName})
+		if _, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: input.TableName}); err == nil {
+			_, err := client.DeleteTable(ctx, &dynamodb.DeleteTableInput{TableName: input.TableName})
 			must(err)
 		}
 
-		_, err := rt.Dynamo.Client.CreateTable(ctx, input)
+		_, err := client.CreateTable(ctx, input)
 		must(err)
 	}
 }
 
 var sqlResetTestData = `
-UPDATE contacts_contact SET current_flow_id = NULL;
+UPDATE contacts_contact SET last_seen_on = NULL, current_session_uuid = NULL, current_flow_id = NULL;
 
-DELETE FROM tickets_ticketdailycount;
-DELETE FROM tickets_ticketdailytiming;
 DELETE FROM notifications_notification;
 DELETE FROM notifications_incident;
 DELETE FROM request_logs_httplog;
-DELETE FROM tickets_ticketdailycount;
 DELETE FROM tickets_ticketevent;
 DELETE FROM tickets_ticket;
 DELETE FROM triggers_trigger_contacts WHERE trigger_id >= 30000;
@@ -285,11 +284,10 @@ DELETE FROM triggers_trigger WHERE id >= 30000;
 DELETE FROM channels_channel WHERE id >= 30000;
 DELETE FROM channels_channelcount;
 DELETE FROM channels_channelevent;
-DELETE FROM channels_channellog;
 DELETE FROM msgs_msg;
 DELETE FROM flows_flowrun;
-DELETE FROM flows_flowcategorycount;
 DELETE FROM flows_flowactivitycount;
+DELETE FROM flows_flowresultcount;
 DELETE FROM flows_flowstartcount;
 DELETE FROM flows_flowstart_contacts;
 DELETE FROM flows_flowstart_groups;
@@ -297,8 +295,8 @@ DELETE FROM flows_flowstart;
 DELETE FROM flows_flowsession;
 DELETE FROM flows_flowrevision WHERE flow_id >= 30000;
 DELETE FROM flows_flow WHERE id >= 30000;
+DELETE FROM ai_llm WHERE id >= 30000;
 DELETE FROM ivr_call;
-DELETE FROM campaigns_eventfire;
 DELETE FROM msgs_msg_labels;
 DELETE FROM msgs_msg;
 DELETE FROM msgs_broadcast_groups;
@@ -311,6 +309,7 @@ DELETE FROM templates_template WHERE id >= 30000;
 DELETE FROM schedules_schedule;
 DELETE FROM campaigns_campaignevent WHERE id >= 30000;
 DELETE FROM campaigns_campaign WHERE id >= 30000;
+DELETE FROM contacts_contactfire;
 DELETE FROM contacts_contactimportbatch;
 DELETE FROM contacts_contactimport;
 DELETE FROM contacts_contacturn WHERE id >= 30000;
@@ -319,7 +318,9 @@ DELETE FROM contacts_contact WHERE id >= 30000;
 DELETE FROM contacts_contactgroupcount WHERE group_id >= 30000;
 DELETE FROM contacts_contactgroup WHERE id >= 30000;
 DELETE FROM orgs_itemcount;
+DELETE FROM orgs_dailycount;
 
+ALTER SEQUENCE ai_llm_id_seq RESTART WITH 30000;
 ALTER SEQUENCE flows_flow_id_seq RESTART WITH 30000;
 ALTER SEQUENCE tickets_ticket_id_seq RESTART WITH 1;
 ALTER SEQUENCE channels_channelevent_id_seq RESTART WITH 1;

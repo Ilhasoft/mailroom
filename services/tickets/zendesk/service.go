@@ -312,7 +312,8 @@ func (s *service) AddStatusCallback(name, domain string, logHTTP flows.HTTPLogCa
 	payload := `{
 	"event": "status_changed",
 	"id": {{ticket.id}},
-	"status": "{{ticket.status}}"
+	"status": "{{ticket.status}}",
+	"tags": "{{ticket.tags}}"
 }`
 
 	trigger := &Trigger{

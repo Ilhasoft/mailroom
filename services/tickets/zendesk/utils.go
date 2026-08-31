@@ -12,6 +12,19 @@ import (
 	"github.com/pkg/errors"
 )
 
+const tagClosedByMerge = "closed_by_merge"
+
+// hasClosedByMergeTag reports whether Zendesk ticket tags include closed_by_merge.
+// Zendesk sends tags as a space-separated string via {{ticket.tags}}.
+func hasClosedByMergeTag(tags string) bool {
+	for _, tag := range strings.Fields(strings.ToLower(tags)) {
+		if tag == tagClosedByMerge {
+			return true
+		}
+	}
+	return false
+}
+
 func ParseNumericID(s string) (int64, error) {
 	n, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {

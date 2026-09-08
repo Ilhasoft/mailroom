@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/apex/log"
@@ -689,7 +690,12 @@ func handleBrainRouting(
 		return fmt.Errorf("no project uuid found")
 	}
 
-	if err = requestToRouter(event, rt.Config, contact, projectUUID, channel); err != nil {
+	routerText, err := consumeHandoverContext(ctx, rt.DB, event)
+	if err != nil {
+		return err
+	}
+
+	if err = requestToRouter(event, rt.Config, contact, projectUUID, channel, routerText); err != nil {
 		return errors.Wrap(err, "unable to send message to router")
 	}
 
@@ -1100,7 +1106,52 @@ type StopEvent struct {
 	OccurredOn time.Time        `json:"occurred_on"`
 }
 
-func requestToRouter(event *MsgEvent, rtConfig *runtime.Config, contact *flows.Contact, projectUUID uuids.UUID, channel *models.Channel) error {
+// consumeHandoverContext looks up a pending wa_conversation_handover for this
+// contact+channel, consumes it, and returns the text to send to the brain router.
+// msgs_msg.text and event.Text stay unchanged. Lookup and consume run in one
+// transaction. A failed consume (0 rows) leaves the original inbound text as-is
+// so a second worker cannot re-attach context.
+func consumeHandoverContext(ctx context.Context, db models.QueryerWithTx, event *MsgEvent) (string, error) {
+	tx, err := db.BeginTxx(ctx, nil)
+	if err != nil {
+		return event.Text, errors.Wrapf(err, "error starting wa conversation handover tx")
+	}
+	defer tx.Rollback()
+
+	pending, err := models.LookupPendingWAConversationHandover(ctx, tx, event.ChannelID, event.ContactID)
+	if err != nil {
+		return event.Text, err
+	}
+	if pending == nil || pending.ContextText == "" {
+		return event.Text, nil
+	}
+
+	consumed, err := models.ConsumePendingWAConversationHandover(ctx, tx, pending.ID, event.MsgID)
+	if err != nil {
+		return event.Text, err
+	}
+	if !consumed {
+		return event.Text, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return event.Text, errors.Wrapf(err, "error committing wa conversation handover consume")
+	}
+	return formatRouterTextWithHandover(event.Text, pending.ContextText), nil
+}
+
+// formatRouterTextWithHandover builds the brain POST text. Empty inbound text
+// (media-only) omits the leading "; ".
+func formatRouterTextWithHandover(msgText, contextText string) string {
+	if strings.TrimSpace(contextText) == "" {
+		return msgText
+	}
+	if strings.TrimSpace(msgText) == "" {
+		return "Context: " + contextText
+	}
+	return msgText + "; Context: " + contextText
+}
+
+func requestToRouter(event *MsgEvent, rtConfig *runtime.Config, contact *flows.Contact, projectUUID uuids.UUID, channel *models.Channel, routerText string) error {
 	httpClient, httpRetries, _ := goflow.HTTP(rtConfig)
 
 	streamSupport := false
@@ -1123,7 +1174,7 @@ func requestToRouter(event *MsgEvent, rtConfig *runtime.Config, contact *flows.C
 	}{
 		ProjectUUID:   projectUUID,
 		ContactURN:    event.URN.Identity(),
-		Text:          event.Text,
+		Text:          routerText,
 		Attachments:   event.Attachments,
 		Metadata:      event.Metadata,
 		MsgEvent:      *event,

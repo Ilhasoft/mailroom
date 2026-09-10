@@ -46,6 +46,7 @@ type Contact struct {
 	ID         models.ContactID  `json:"id"`
 	UUID       flows.ContactUUID `json:"uuid"`
 	LastSeenOn *time.Time        `json:"last_seen_on,omitempty"`
+	OtherURNs  []urns.URN        `json:"other_urns,omitempty"`
 }
 
 type OptInRef struct {
@@ -70,6 +71,20 @@ type Session struct {
 	Status     string            `json:"status"`
 	SprintUUID flows.SprintUUID  `json:"sprint_uuid"`
 	Timeout    int               `json:"timeout,omitempty"`
+}
+
+// otherURNs returns the identities of all URNs on the contact except the one being sent to
+func otherURNs(mo *models.MsgOut) []urns.URN {
+	if mo.Contact == nil {
+		return nil
+	}
+	var others []urns.URN
+	for _, u := range mo.Contact.URNs() {
+		if mo.URN == nil || u.ID != mo.URN.ID {
+			others = append(others, u.Identity)
+		}
+	}
+	return others
 }
 
 var sessionStatusMap = map[flows.SessionStatus]string{flows.SessionStatusWaiting: "W", flows.SessionStatusCompleted: "C"}
@@ -109,6 +124,7 @@ func NewCourierMsg(oa *models.OrgAssets, mo *models.MsgOut, ch *models.Channel) 
 			ID:         mo.ContactID(),
 			UUID:       mo.Contact.UUID(),
 			LastSeenOn: mo.Contact.LastSeenOn(),
+			OtherURNs:  otherURNs(mo),
 		},
 		Text:         mo.Text(),
 		Attachments:  mo.Attachments(),

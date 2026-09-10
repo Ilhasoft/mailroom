@@ -635,3 +635,41 @@ func TestLoadContactURNs(t *testing.T) {
 	assert.NoError(t, err)
 	assert.ElementsMatch(t, []*models.ContactURN{annURNs[0], bobURNs[0]}, urns)
 }
+
+func TestReassignShellContactURN(t *testing.T) {
+	ctx, rt := testsuite.Runtime(t)
+
+	defer testsuite.Reset(t, rt, testsuite.ResetData)
+
+	oa := testdb.Org1.Load(t, rt)
+
+	shell := testdb.InsertContact(t, rt, testdb.Org1, "8b2b8b4c-8e6e-4c96-9e9c-bf6b56a04e37", "Shell", "eng", models.ContactStatusActive)
+	shellURNID := testdb.InsertContactURN(t, rt, testdb.Org1, shell, "whatsapp:US.A1B2C3", 1000, nil)
+
+	other := testdb.InsertContact(t, rt, testdb.Org1, "a5b62498-f593-4dd2-a390-e2ff5b6d3c5b", "Other", "eng", models.ContactStatusActive)
+	testdb.InsertContactURN(t, rt, testdb.Org1, other, "tel:+16055747777", 1000, nil)
+	otherURNID := testdb.InsertContactURN(t, rt, testdb.Org1, other, "whatsapp:US.D4E5F6", 999, nil)
+
+	ownerID, reassigned, err := models.ReassignShellContactURN(ctx, rt.DB, oa, testdb.Ann.ID, "whatsapp:US.XXXXXX")
+	assert.NoError(t, err)
+	assert.Equal(t, models.NilContactID, ownerID)
+	assert.False(t, reassigned)
+
+	ownerID, reassigned, err = models.ReassignShellContactURN(ctx, rt.DB, oa, shell.ID, "whatsapp:US.A1B2C3")
+	assert.NoError(t, err)
+	assert.Equal(t, models.NilContactID, ownerID)
+	assert.False(t, reassigned)
+
+	ownerID, reassigned, err = models.ReassignShellContactURN(ctx, rt.DB, oa, testdb.Ann.ID, "whatsapp:US.D4E5F6")
+	assert.NoError(t, err)
+	assert.Equal(t, other.ID, ownerID)
+	assert.False(t, reassigned)
+	assertdb.Query(t, rt.DB, `SELECT contact_id FROM contacts_contacturn WHERE id = $1`, otherURNID).Returns(int64(other.ID))
+
+	ownerID, reassigned, err = models.ReassignShellContactURN(ctx, rt.DB, oa, testdb.Ann.ID, "whatsapp:US.A1B2C3")
+	assert.NoError(t, err)
+	assert.Equal(t, shell.ID, ownerID)
+	assert.True(t, reassigned)
+	assertdb.Query(t, rt.DB, `SELECT contact_id FROM contacts_contacturn WHERE id = $1`, shellURNID).Returns(int64(testdb.Ann.ID))
+	assertdb.Query(t, rt.DB, `SELECT count(*) FROM contacts_contacturn WHERE contact_id = $1`, shell.ID).Returns(0)
+}

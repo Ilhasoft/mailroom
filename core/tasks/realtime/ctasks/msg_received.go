@@ -34,6 +34,7 @@ type MsgReceivedTask struct {
 	Text          string           `json:"text"`
 	Attachments   []string         `json:"attachments,omitempty"`
 	NewContact    bool             `json:"new_contact"`
+	NewURN        *NewURNSpec      `json:"new_urn,omitempty"`
 }
 
 func (t *MsgReceivedTask) Type() string {
@@ -125,6 +126,13 @@ func (t *MsgReceivedTask) perform(ctx context.Context, rt *runtime.Runtime, oa *
 		Attachments: attachments,
 		LogUUIDs:    logUUIDs,
 	}
+
+	if t.NewURN != nil {
+		if err := t.NewURN.Apply(ctx, rt, oa, scene, channel); err != nil {
+			return fmt.Errorf("error applying new URN: %w", err)
+		}
+	}
+
 	if err := scene.AddEvent(ctx, rt, oa, msgEvent, models.NilUserID); err != nil {
 		return fmt.Errorf("error adding message event to scene: %w", err)
 	}

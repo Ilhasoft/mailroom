@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 
 	"github.com/nyaruka/gocommon/urns"
 	"github.com/nyaruka/goflow/flows/modifiers"
@@ -11,6 +12,13 @@ import (
 	"github.com/nyaruka/mailroom/core/runner"
 	"github.com/nyaruka/mailroom/runtime"
 )
+
+// gocommon v1.75.7 validates BSUID on whatsapp: but does not export IsWhatsAppBSUID (v1.87.0+).
+var whatsAppBSUIDRegex = regexp.MustCompile(`^[A-Z]{2}\.[a-zA-Z0-9]{1,128}$`)
+
+func isWhatsAppBSUID(u urns.URN) bool {
+	return u.Scheme() == urns.WhatsApp.Prefix && whatsAppBSUIDRegex.MatchString(u.Path())
+}
 
 // NewURNSpec describes a new URN to add to a contact
 type NewURNSpec struct {
@@ -21,7 +29,7 @@ type NewURNSpec struct {
 // Apply appends the new URN to the contact. A WhatsApp BSUID owned by a shell contact (no other URNs)
 // is reassigned to this contact first so the append can proceed.
 func (s *NewURNSpec) Apply(ctx context.Context, rt *runtime.Runtime, oa *models.OrgAssets, scene *runner.Scene, channel *models.Channel) error {
-	if urns.IsWhatsAppBSUID(s.Value) {
+	if isWhatsAppBSUID(s.Value) {
 		ownerID, reassigned, err := models.ReassignShellContactURN(ctx, rt.DB, oa, scene.ContactID(), s.Value)
 		if err != nil {
 			return fmt.Errorf("error reassigning URN from shell contact: %w", err)
